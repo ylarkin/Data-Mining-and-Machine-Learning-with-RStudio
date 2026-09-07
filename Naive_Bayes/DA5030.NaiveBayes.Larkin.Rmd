@@ -1,0 +1,170 @@
+---
+title: "DA5030 Naive Bayes"
+author: "Larkin, Yvonne"
+date: "Fall 2025, October 14, 2025"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r load_packages, warning=FALSE, message=FALSE}
+library(knitr)
+library(caret) #confusion matrix
+library(e1071) #naive bayes
+```
+
+## Q2. Load CSV file
+```{r Q2_load_csv}
+url <- "http://s3.us-east-2.amazonaws.com/artificium.us/datasets/HouseVotes-1984-ButOne.csv"
+#all categorical variables: Class Republican/Democrat and 17 legislatures vote cast for Features y/n
+df <- read.csv(url, 
+               header = T, 
+               stringsAsFactors = T) # factors for naive bayes
+head(df, 5)
+```
+## Q3. Get 5 lists of index split values
+Desired target is 350 cases for training set, due to rounding have the p = (349/434) in `caret` function `createDataPartition`. I did not use `createFolds` due to the even split nature of *folds* but I also did not use `trainControl()` with `train()` due to the instructions specifying use of `e1071` package and its function `naiveBayes( )` to train the models. So these 5 manually split data partitions are "random" not "cross-validated".
+```{r Q3_five_index_lists}
+# 5 random sets to implement for testing
+set.seed(932)
+
+# split data and converted to df from lists
+# select 349 because of uneven division value for desired vector length 350
+x.split_index <- as.data.frame(createDataPartition(df$Class, 
+                                                   p = (349/434), 
+                                                   list = TRUE, 
+                                                   times = 5))
+```
+
+## Q3. Split Data into 5 Training and 5 Testing Sets
+```{r Q3_five_random_samples}
+# training sets
+df2.tr <- models_train.list <- lapply(1:ncol(x.split_index),
+                      function(x){
+                        # index training set
+                        data.train <- df[x.split_index[[x]], ]
+                      })
+# testing set
+df2.test <- models_test.list <- lapply(1:ncol(x.split_index),
+                      function(x){
+                        # index testing set
+                        data.test <- df[-x.split_index[[x]], ]
+                      })
+```
+
+## Q4. List of 5 Models
+Use `e1071::naiveBayes( )` to trail each model with corresponding sample list. 
+```{r Q4_naive_bayes_models}
+# all 5 Naive Bayes models ; frequency tables used to predict
+nb_models <- lapply(1:length(models_train.list), function(x){
+  # access list of sample data ; extracted at data.frame level
+  data <- models_train.list[[x]]
+  # build  naive bayes classifiers ; classified feature 'Class'
+  naiveBayes(subset(data, select = -Class), 
+             data$Class, 
+             laplace = 1)
+})
+```
+
+## Q5. Build Ensemble Function `predict_part(models, new_cases)`
+models = list ; new_cases = data.frame
+A list of models and a data frame of Cases (including the "Class" column being Predicted) ccan be plugged into the **Emsemble Function** `predict_party(models_list, new_cases_df)` to generate and return the "Class" prediction for each case as a single vector that is the majority vote for all models used to evaluate the new case.
+```{r Q5_ensemble_function}
+# models as lists
+# new_cases as df row
+predict_party <- function(models, df.new_cases){
+  # loop models and 
+  for(m in 1:length(models)){
+    # evaluate each row individually for all 5 models#new_cases <- 
+    # make predictions and assign as list
+    df.internal <- as.data.frame(predict(models[[m]], 
+                                subset(df.new_cases, select = -Class)))
+    # initialize counts
+    Dcount <- Rcount <- 0
+    #initialize empty vector 
+    final_predict <- character(length = nrow(df.internal))
+    # evaluate each row
+    for(r in 1:nrow(df.internal)){
+      Rcount <- sum(df.internal[r,] == 'republican', na.rm = TRUE)
+      Dcount <- sum(df.internal[r,] == 'democrat', na.rm = TRUE)
+      #assign majority
+      final_predict[r] <- ifelse(Rcount == Dcount, "tie", ifelse(Rcount > Dcount, 'republican', 'democrat'))
+      }
+    final_predict
+  }
+  # Have to make sure to return list all the way outside the loops
+  final_predict
+  } 
+```
+
+## Q6. Calculate Accuracy Using Validation set
+Here I am testing to make sure that the test sets do not result in a "tie" which could occur due to the present of `NA`s in votes. If "tie" did occur then a random selection for *'republican'* or *'democrat'* could be used if this feature needed to be used to assess further down the model, or for use in a different model. This is not necessary at this time and therefore I will leave "tie" as is.
+```{r Q6_ensemble_model_accuracy, warning=FALSE}
+#initialize prediction list
+test_prediction <- vector("list", length = length(models_test.list))
+# validation test
+for(m in 1:length(models_test.list)){
+  test_prediction[m] <- predict(nb_models, subset(models_test.list[[m]], select = -Class))
+  ifelse(any(test_prediction[m] == 'tie') == TRUE, print(paste("Tie Value in list ", m)),next)
+}
+```
+
+Loop through all 5 test samples generated from Q3 and use all models from Q4 to plug into the **Emsemble Function** `predict_party(model_list, new_case_df)` <br>
+Saved all `confusionMatrix(table())` results in vector for visual manual exploration, but appended all table values to vectors to make a data frame from. Included Kappa as it is an adjusted Accuracy and therefore important when assessing the Accuracy decimal percent along with True Positive and True Negatives.
+
+```{r Q6_find_overall_model_accuracy}
+# initialize empty vectors
+Model.Accuracy <- numeric(length = length(models_test.list))
+Model.Kappa <- numeric(length = length(models_test.list))
+True.Positive <- numeric(length = length(models_test.list))
+True.Negative <- numeric(length = length(models_test.list))
+# accuracy of each model
+display.table <- table_accuracy <- vector("list", length = length(models_test.list))
+
+# loop for confusionMatrix of each ensemble prediction run, against original sample run and extract desired display table
+for(i in 1:length(models_test.list)){
+  #save entire Confusion Matrix for evaluation outside loop ; set poisitive to 'democrat' to make sure all samples evaluated the same way
+  table_accuracy[[i]] <- cM <- confusionMatrix(table(test_prediction[[i]], models_test.list[[i]][['Class']]), positive = 'democrat')
+  
+  # extract from current iteration by index of confusion Matrix
+  # use double bracket to extract value only ; doesn't ask for the 
+  Model.Accuracy[i] <- cM$overall[['Accuracy']]
+  Model.Kappa[i] <- cM$overall[['Kappa']]
+  True.Positive[i] <- cM$byClass[['Sensitivity']]
+  True.Negative[i] <- cM$byClass[['Specificity']]
+}
+
+```
+
+Format information for markdown display. Set the positive factor to 'democrat' to assure no switch in accuracy output sample to sample depending on the starting factor. 
+```{r Q6_accuracy_Table}
+display.df <- data.frame(row.names = c("Sample_1", "Sample_2", "Sample_3", "Sample_4", "Sample_5"),
+                         Accuracy = Model.Accuracy,
+                         Kappa = Model.Kappa,
+                         True.Positive = True.Positive,
+                         True.Negative = True.Negative)
+#add the average of all 5 runs
+display.df[nrow(display.df) + 1, ] <- sapply(display.df, mean)
+row.names(display.df)[6] <- "Overall_Average"
+# display table for markdown
+display.md <- kable(round(display.df, 2), caption = "Ensemble Model's Accuracy Comparison by Labeled Test Set Run with 'democrat' as Positive Factor", )
+```
+`r display.md`
+
+## Q7. New Case Predication
+Appended new case to existing data frame so that the corresponding labels are assigned to the factor used. Use the `tail( )` to display and for `predict_party( )` function.
+```{r Q7_Make_guess_party}
+# define new case as data.frame
+new_case <- c(NA, 'n', 'y', 'n', 'n', 'y', 'y', 'y', 'n', 'n', 'y', 'n', 'y', 'y', 'y', NA, 'n')
+df.new_case <- rbind(df, new_case)
+tail(df.new_case, 3)
+```
+
+```{r Q7_prediction}
+# assign new case to variable (chose 'k' at random)
+k <- tail(df.new_case, 1)
+new_case.predict <- predict_party(nb_models, k)
+new_case.predict
+```
+
+### Based on the Ensemble Function Model, the new case is predicted to be: **`r new_case.predict`**

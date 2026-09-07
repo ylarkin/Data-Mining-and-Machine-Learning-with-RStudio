@@ -1,0 +1,497 @@
+---
+title: "DA5020 Logistic Regression"
+author: "Larkin, Yvonne"
+date: "Fall 2025, October 29, 2025"
+output:
+  html_document:
+    df_print: paged
+subtitle: '07.2 : Classification with Logistic Regression'
+---
+## 1. Create Project
+Data file : [Bank Marketing Dataset](https://s3.us-east-2.amazonaws.com/artificium.us/datasets/bank-term-deposit-marketing-full.csv) <br>
+Relevant information : [UCI Machine Learning Repository : Bank Marketing](https://archive.ics.uci.edu/dataset/222/bank+marketing) <br>
+
+### Bank Client Data Input variables:
+
+   1.  age (numeric)
+   2.  job : type of job (categorical: "admin.","unknown","unemployed","management","housemaid","entrepreneur","student",
+                                       "blue-collar","self-employed","retired","technician","services") 
+   3.  marital : marital status (categorical: "married","divorced","single"; note: "divorced" means divorced or widowed)
+   4.  education (categorical: "unknown","secondary","primary","tertiary")
+   5.  default: has credit in default? (binary: "yes","no")
+   6.  balance: average yearly balance, in euros (numeric) 
+   7.  housing: has housing loan? (binary: "yes","no")
+   8.  loan: has personal loan? (binary: "yes","no")
+   
+### related with the last contact of the current campaign:
+
+   9.  contact: contact communication type (categorical: "unknown","telephone","cellular") 
+  10.  day: last contact day of the month (numeric)
+  11.  month: last contact month of year (categorical: "jan", "feb", "mar", ..., "nov", "dec")
+  12.  duration: last contact duration, in seconds (numeric)
+
+### other attributes:
+
+  13.  campaign: number of contacts performed during this campaign and for this client (numeric, includes last contact)
+  14.  pdays: number of days that passed by after the client was last contacted from a previous campaign (numeric, -1 means client was not previously contacted)
+  15 - previous: number of contacts performed before this campaign and for this client (numeric)
+  16 - poutcome: outcome of the previous marketing campaign (categorical: "unknown","other","failure","success")
+
+### Output variable (desired target):
+  
+  17.  y - has the client subscribed a term deposit? (binary: "yes","no")
+  
+Use downloaded data file to create Logistic Regression model to predict variable 'y' which indicates whether a bank customer subscribed to a term deposit product.
+
+```{r 1.load_packages, warning= FALSE, message= FALSE}
+library(ggplot2) # RStudio suggested https://r4ds.hadley.nz/ when I loaded this; very helpful
+library(caret)
+```
+
+
+## 2 Download .CSV to Project and Load from Project
+I am loading the file with `stringsAsFactors = TRUE` first in order to have a general understanding of the file. I will overwrite the `df` factors to be how I would like later.
+```{r 2.load_data}
+df <- read.csv2("bank-term-deposit-marketing-full.csv",
+                header = TRUE,
+                # told to do WOE and one-hot encoding
+                stringsAsFactors = TRUE) 
+# confirm load
+head(df, 5)
+```
+
+## 3. Brief Exploratory Data Analysis
+```{r 3.EDA}
+str(df)
+summary(df)
+```
+
+Loaded csv filed with `stringsAsFactors = TRUE` for a more informative `summary(df)` overview.
+I can see there are no missing values according to the overview, but I will still confirm with `is.na()`. There are many nominal features with a lot of levels, which logistic regression does not handle well. <br>
+
+Currently, only some 'numeric features' appear to be "continuous" (though all are integer class), so even if discrete numerically I anticipate some level of detail will be lost with logistic regression, though it may not be that significant as a majority of the features are nominal in nature. <br>
+
+There appear to be extreme outliers with the Max and Mean not being within much farther that the 1st and 3rd Quartile indicate for the feature. General Linera Regreesion can be affected by extreme outliers. <br>
+
+### Missing Values
+Borrowing approach from [Module 07.5](http://artificium.us/lessons/03.ml/l-3-440-primer-regression/l-3-440.html) by Professor Schedlbauer. However only `is.na( )` is needed as no string values are present due to `stringsAsFactors = TRUE` in `df`.
+```{r 3.missing_values}
+#initialize object as false for print 
+found <- F
+unique_list <- list(length = ncol(df))
+for(c in 1:ncol(df)){
+  missing.Values <- which(is.na(df[,c]))
+  num.Missing.Values <- length(missing.Values)
+  if(num.Missing.Values > 0){
+    print(paste0("Column '", names(df)[c], "' has ", num.Missing.Values, " missing values"))
+    found <- T
+  }
+  print(paste0(length(unique(df[,c])), " unique values in Column '", names(df)[c], "'"))
+  unique_list[[c]] <- unique(df[,c])
+}
+names(unique_list) <- colnames(df)
+```
+
+No missing values, which is great. If there were missing values I would likely borrow my approach for the Decision Tree or kNN because neither require a normal distribution and are decent at categorization, though I do think either some features would need to be removed due to scale.  
+
+### Rework Factors
+
+Day is the last day of the month a person was contacted and so can be nominal to avoid magnitude. Age has inherent magnitude to it so I will leave as is. Balance, duration, and pdays have large ranges but they have magnitude. I will leave as is to be numeric. 
+```{r categorize_day}
+# day
+df$day <- ifelse(df$day %in% 1:10, "begin_mo", ifelse(df$day %in% 11:21, "mid-mo", "end_mo"))
+df$day <- factor(df$day, levels = c("begin_mo", "mid_mo", "end_mo"))
+```
+
+
+### Split Features For Visualization
+
+[RStudio suggested when 'ggplot' Loaded](https://r4ds.hadley.nz/) ; this is actually way more helpful than the [ggplot2 Cheatsheet](file:///E:/Computer%20remove%20before%20reset/Documents/Northeastern%20Documents/ggplot2_Rvisualization_cheatsheet.pdf), at least to me for understanding ggplot.
+
+```{r 3.split_feature type}
+categor_vec <- vector('numeric')
+integer_vec <- vector('numeric')
+for(c in 1:ncol(df)){
+  if(is.factor(df[,c]) == TRUE){
+    # I just discovered that R has 'append()' just like python ; for some reason I didn't think it had the same function 
+    # but I finally tried searching the RHelp since 'factor_vec[length(factor_vec) + 1] <- c' seemed annoying
+    categor_vec <- append(categor_vec, c)
+  } else {
+    integer_vec <- append(integer_vec, c)
+  }
+  categor_vec
+  integer_vec
+}
+```
+
+
+### Numeric Visualization : Density Histogram and Box Plot
+```{r 3.numeric_hist, warning = FALSE, message = FALSE}
+# plot logic from Decision Tree; cite the ggplot2 cheatsheet, since again I always struggle with it
+# decided to try for loop intro I saw from Prof Schedlbauer instead of (for i in 1:x)
+for (num in integer_vec) {
+  feat <- df[[num]]
+  # numeric plotting with ggplot2 T.T
+  np <- ggplot(df, 
+              aes(x = feat)) +
+    # set bin width to half the sd value of the feature so it is easier to visualize empirical rule
+    geom_histogram(aes(y = ..density..), 
+                   # decided to leave 'na.rm = T' for future use cases ; if NA present
+                   linewidth = sd(feat, na.rm = T)/2) +
+    stat_function(fun = dnorm,
+                  args = list(mean = mean(feat, na.rm = T), sd = sd(feat, na.rm = T)),
+                  color = "red", 
+                  size = 1) +
+    ggtitle(names(df[num])) +
+    theme_minimal()
+  
+  print(np)
+  
+  # box plot
+  np2 <- ggplot(df, 
+              aes(x = feat)) +
+    geom_boxplot() +
+    ggtitle(colnames(df[num])) +
+    theme_minimal()
+  
+  print(np2)
+}
+```
+
+The Box Plots help identify the outliers and assess if any extreme values should be handled before encoding. Looking at the density and count histograms, the outlier values do not seem like impossible values for the category even if they are not common. I think proceeding without handling extreme values should be fine with logistic regression, as discretization will somewhat reduce the  impact of outliers.
+
+Luckily Logistic Regression does not assumes normality and the data does seem to have a distribution that will be transformed by the Weight of Evidence encoding already and so the WoE for logistic regression should be helpful. The 'days' numeric seems to have 3 period of binning, but I think treating it as a categorical for day by WoE is probably better than leaving it as numeric.
+
+### Categorical Visualization : Bar Graphs
+```{r 3.visualize_data, warning=FALSE, message=FALSE}
+# RHelp on built-ins because I figured there had to be a calendar and alphabet related thing
+mon.val <- tolower(month.abb)
+df$month  <- factor(df$month, levels = mon.val) # set order for graph to see if any natural breaks seem present
+
+# loop
+for(num in categor_vec){
+  feat <- df[[num]]
+  # categorical plotting with ggplot2 T.T
+  cp <- ggplot(df, 
+              aes(x = feat)) +
+    # now looking at frequencies for each category, for discrete values (bins) so bar graph
+    geom_bar()+
+    ggtitle(colnames(df[num])) +
+    theme_minimal()
+  
+  print(cp)
+} 
+```
+
+There does seem to be multiple class imbalances in the categorical features. There is a large imbalance for 'marital', 'education', 'default', 'loan', 'contact', 'month', and 'outcome'. There is a slight imbalance for 'job'; and relatively none for 'housing. I anticipate outliers found in 'agd', 'duration', 'campaign' 'pdays' and 'previous' do to the 'Max.' values being very far from the 'Mean'. I'll have to reference to the UCI page for some context on interpretation of some categories. <br>
+
+## 4. Weight of Evidence Binary Encoding
+```{r 4.woe_function}
+woe.probability.encoding <- function(feat_col, target){
+  # assign binary factor values
+  feat_col <- factor(feat_col, levels = c('yes','no'), labels = c(1, 0))
+  
+  # counts feature positive
+  # feat = 'yes' and y (subscription) = 'yes'
+  yes_pos <- length(which(feat_col == 1 & target == 1))
+  # feat = 'yes' and y (subscription) = 'no'
+  yes_neg <- length(which(feat_col == 1 & target == 0))
+  
+  #c counts feature negative
+  # feat = 'no' and y(subscription) = 'yes'
+  no_pos <- length(which(feat_col == 0 & target == 1))
+  # feat = 'no' and y (subscription) = 'no'
+  no_neg <- length(which(feat_col == 0 & target == 0))
+  
+  # totals for target
+  # total target y (subscription) = 'yes'
+  sub_yes <- length(which(target == 1))
+  # total target y (subscription) = 'no'
+  sub_no <- length(which(target == 0))
+  #probability + laplace est. 
+  
+  # probabilities feature positive sub
+  P_yes_pos <- (yes_pos + 0.5)/sub_yes
+  P_yes_neg <- (yes_neg + 0.5)/sub_no
+  
+  # probabilities feature negative
+  P_no_pos <- (no_pos + 0.5)/sub_yes
+  P_no_neg <- (no_neg + 0.5)/sub_no
+  
+  # Weight of Evidence feature leads to successful subscription 
+  # when feat = yes
+  woe.FeatY <- log(P_yes_pos/P_yes_neg)
+  
+  # when feat = no
+  woe.FeatN <- log(P_no_pos/P_no_neg)
+  
+  # assign woe probability as factor values
+  woe_col <- ifelse(feat_col == 1, woe.FeatY, woe.FeatN)
+  return(woe_col)
+}
+```
+
+```{r target_encoding}
+# encode target 'y' manually for function use
+df$y <- factor(df$y, levels = c('yes', 'no'), labels = c(1, 0))
+```
+
+```{r identify_binary_col}
+# number of levels by category
+cat_num <- sapply(df[,-which(colnames(df) == 'y')], function(x){
+  length(levels(x))})
+# index column all features with 2 levels : 'yes','no'
+col_binary <- which(cat_num == 2)
+```
+### new WoE only df
+```{r encode_woe_for_binary_col}
+binary_encoded_df <- as.data.frame(lapply(col_binary, function(x){
+  feat <- df[,x]
+  woe.probability.encoding(feat, df$y)
+}))
+```
+
+## 4.One-Hot Encoding other Categorical Variables
+```{r index_categorical_feats_over2_levels}
+# index column
+col_otherCat <- which(cat_num > 2)
+col_otherCat
+```
+
+```{r one_hot_column_helper_function}
+# create one-hot matrix of desired feature
+feature_encode <- function(features){
+  n <- levels(features)
+  one_hot_n <- length(n) - 1
+  # initialize desired columns
+  feat_matrix <- matrix(0, nrow = nrow(df), ncol = one_hot_n)
+  colnames(feat_matrix) <- n[1:one_hot_n]
+  # make df for nesting; but call 'matrix' until final combined df
+  new.df <- as.data.frame(feat_matrix)
+}
+```
+
+```{r initialize_the_zeros_matrix}
+# all zero matrices for one-hot encoding so levels - 1
+encode_features_matrix <- lapply(col_otherCat, function(x){
+  list_name <- feature_encode(df[,x])
+})
+```
+
+```{r function_assign_one_hot_value_by_feature_level}
+# very nested 
+encode_and_merge <- function(ma.trix, df){
+  matrix_names <- names(ma.trix)
+  merge.matrices <- vector(length = nrow(df))
+  for(f in matrix_names){
+    df_feature <- ma.trix[f]
+    feat_levels <- names(ma.trix[[f]])
+    for(l in feat_levels){
+      index_match <- which(df[,f] == l)
+      # index level's column inside feature list
+      ma.trix[[f]][[l]][index_match] <- 1 
+    }
+    new_names <- sapply(feat_levels, function(x){ paste0(f,"_", x)})
+    colnames(ma.trix[[f]]) <- new_names
+    merge.matrices <- cbind(merge.matrices, ma.trix[[f]])
+  }
+  merge.matrices[-1]
+}
+```
+
+```{r merge_one_hot_catergories}
+merged.df <- encode_and_merge(encode_features_matrix, df)
+```
+
+## 4. Final Encoded Data Frame
+```{r combine_all_encoded_features_and_numeric_features}
+#remaining categories
+col_leftover <- df[,-c(col_binary,col_otherCat)]
+# combine all into one df
+logistic_df <- cbind(col_leftover, merged.df, binary_encoded_df)
+# encode target
+logistic_df$y <- factor(logistic_df$y, levels = c(1, 0), labels = c("Subscribed", "Not Subscribed"))
+```
+
+```{r}
+# reproduce
+set.seed(17)
+train.index <- createDataPartition(logistic_df$y, p = 0.8, list = FALSE)
+# split data sets
+training_set <- logistic_df[train.index,]
+validation_set <- logistic_df[-train.index,]
+```
+
+## 6. General Logistic Regression Model with All Feature
+```{r}
+log_model <- glm(y ~.,
+                 data = training_set,
+                 family = binomial)
+colnames(training_set)
+summary(log_model)
+mod_sum <- summary(log_model)
+significance_vec <- sort(mod_sum$coefficients[,'Pr(>|z|)'], decreasing = TRUE)
+head(significance_vec, 5)
+```
+
+## 7. Backward Elimination of features by p-value > 0.05
+### Remove job related features
+```{r}
+col_jobs <- grep("^job_", colnames(training_set))
+training_set <- training_set[,-col_jobs]
+print(col_jobs)
+colnames(training_set)
+log_model <- glm(y ~.,
+                 data = training_set,
+                 family = binomial)
+summary(log_model)
+mod_sum <- summary(log_model)
+significance_vec <- sort(mod_sum$coefficients[,'Pr(>|z|)'], decreasing = TRUE)
+head(significance_vec, 5)
+```
+
+### remove pdays
+```{r}
+training_set <- training_set[,-which(colnames(training_set) == 'pdays')]
+colnames(training_set)
+log_model <- glm(y ~.,
+                 data = training_set,
+                 family = binomial)
+summary(log_model)
+mod_sum <- summary(log_model)
+significance_vec <- sort(mod_sum$coefficients[,'Pr(>|z|)'], decreasing = TRUE)
+head(significance_vec, 5)
+```
+
+### remove default
+```{r}
+training_set <- training_set[,-which(colnames(training_set) == 'default')]
+colnames(training_set)
+log_model <- glm(y ~.,
+                 data = training_set,
+                 family = binomial)
+summary(log_model)
+mod_sum <- summary(log_model)
+significance_vec <- sort(mod_sum$coefficients[,'Pr(>|z|)'], decreasing = TRUE)
+head(significance_vec, 5)
+```
+
+### remove education related features
+```{r}
+col_education <- grep("^education_", colnames(training_set))
+training_set <- training_set[,-col_education]
+print(col_education)
+colnames(training_set)
+log_model <- glm(y ~.,
+                 data = training_set,
+                 family = binomial) 
+
+summary(log_model)
+mod_sum <- summary(log_model)
+significance_vec <- sort(mod_sum$coefficients[,'Pr(>|z|)'], decreasing = TRUE)
+head(significance_vec, 5)
+```
+
+### remove age 
+```{r}
+training_set <- training_set[,-which(colnames(training_set) == 'age')]
+colnames(training_set)
+log_model <- glm(y ~.,
+                 data = training_set,
+                 family = binomial)
+summary(log_model)
+mod_sum <- summary(log_model)
+significance_vec <- sort(mod_sum$coefficients[,'Pr(>|z|)'], decreasing = TRUE)
+head(significance_vec, 5)
+```
+
+
+### remove maritalrelated features
+```{r}
+col_marital <- grep("^marital_", colnames(training_set))
+training_set <- training_set[,-col_marital]
+print(col_marital)
+colnames(training_set)
+log_model <- glm(y ~.,
+                 data = training_set,
+                 family = binomial)
+summary(log_model)
+mod_sum <- summary(log_model)
+significance_vec <- sort(mod_sum$coefficients[,'Pr(>|z|)'], decreasing = TRUE)
+head(significance_vec, 5)
+```
+
+### remove poutcome  
+```{r}
+col_pout <- grep("^poutcome_", colnames(training_set))
+print(col_pout)
+colnames(training_set)
+training_set <- training_set[,-col_pout]
+
+log_model <- glm(y ~ .,
+                 data = training_set,
+                 family = binomial)
+summary(log_model)
+mod_sum <- summary(log_model)
+significance_vec <- sort(mod_sum$coefficients[,'Pr(>|z|)'], decreasing = TRUE)
+head(significance_vec, 5)
+```
+
+### remove month related features
+```{r}
+col_month <- grep("^month_", colnames(training_set))
+print(col_month)
+colnames(training_set)
+training_set <- training_set[,-col_month]
+
+log_model <- glm(y ~ .,
+                 data = training_set,
+                 family = binomial)
+summary(log_model)
+mod_sum <- summary(log_model)
+significance_vec <- sort(mod_sum$coefficients[,'Pr(>|z|)'], decreasing = TRUE)
+head(significance_vec, 5)
+```
+
+## 7. Final Model
+```{r 7.final_model}
+colnames(training_set)
+eq_variables <- colnames(training_set)
+eq_slopes <- sapply(eq_variables, function(x){
+  if(x %in% rownames(mod_sum$coefficients)){
+   mod_sum$coefficients[x, 'Estimate']
+  }
+})
+equation <- glm(y ~ balance + duration + campaign + previous + contact_cellular + contact_telephone + day_begin_mo + day_mid_mo + housing + loan,
+                data = training_set,
+                family = binomial)
+equation
+```
+
+$$ Probability("Subscribed") = \frac{1}{1 + e^{-( \alpha + \beta1 \cdot \text{balance} + \beta_2 \cdot \text{duration} + \beta_3 \cdot \text{campaign} + \beta_4 \cdot \text{previous} + \beta_5 \cdot \text{contact_cellular} + \beta_6 \cdot \text{contact_telephone} + \beta_7 \cdot \text{day_begin_mo} + \beta_8 \cdot \text{day_mid_mo} + \beta_9 \cdot \text{housing} + \beta_10 \cdot \text{loan})}} $$
+Where $\alpha$ = Intercept of Model, and $\beta$ corresponds to the feature Coefficients
+
+## 8. Evaluate Logistic Regression Model 
+```{r}
+pred_probability <- predict(equation, 
+                       newdata = validation_set[, -which(colnames(validation_set) == 'y')],
+                       type = 'response')
+
+pred_y <- ifelse(pred_probability > 0.5, 1, 0)
+pred_y <- factor(pred_y, levels = c(1, 0), labels = c("Subscribed", "Not Subscribed"))
+accuracy_glm <- confusionMatrix(pred_y, validation_set$y)
+accuracy_glm
+```
+```{r 9.markdown_var}
+overall_ac <- round(accuracy_glm$overall['Accuracy'], 3) *100
+kappa_mod <- round(accuracy_glm$overall['Kappa'], 3)
+nir_pred <- round(accuracy_glm$overall['AccuracyNull'],3) * 100
+TPos <- round(accuracy_glm$byClass['Sensitivity'], 3) * 100
+TNeg <- round(accuracy_glm$byClass['Specificity'], 3) * 100
+```
+
+## 9. Commentary
+
+**Overall model accuracy is `r overall_ac`%** with a kappa around `r kappa_mod`, this is not a good fit for the data, by the significant under-performance compared to the No Information Rate prediction of `r nir_pred`%. The overall **True Positive prediction is approximately `r TPos`%** which isn't bad, but the **True Negative is approximately `r TNeg`%** and that is significantly unreliable to predict the Subscription rate. This is likely attributed to the huge class imbalance that was indicated by the bar graphs previously. And with the model heavily proportioned for positive "Subscribed" members, it could be causing the bias towards "False Positives". <br><br>
+
+The Decision Tree had a better performance overall. However, the current glm() has one-hot encoding used for all categorical variables that are not binary. If we could even just apply weight of evidence for those features to reduce the n-dimensional problem with glm(), I think the model could perform better overall. Both the Decision Tree and this General Logistic Regression model, lose date in the process of binning, so there are on equal footing. I would say that if this data set was encoded differently it might be okay to use, but due to it being a regression model that assume linearity of data correlation, it isn't best suited for the nominal features and so I'd go with the Decision Tree.

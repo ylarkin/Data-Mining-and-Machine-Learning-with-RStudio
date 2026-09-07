@@ -1,0 +1,60 @@
+---
+title: "DA5030 Assignment 01.1 / Getting to Know R"
+author: "Larkin, Yvonne"
+date: "September 9, 2025"
+output:
+  html_document:
+    df_print: paged
+---
+## Question 1
+Create file project and R Notebook with relevant assignment details listed above.
+
+## Question 2
+Load [FlightsWithAirlines.csv](http://s3.us-east-2.amazonaws.com/artificium.us/datasets/FlightsWithAirlines.csv) details into data frame titled *df.flights* from the file's URL.
+
+```{r Q2-load-csv-from-url, echo=FALSE}
+url <- "http://s3.us-east-2.amazonaws.com/artificium.us/datasets/FlightsWithAirlines.csv"
+df.flights <- read.csv(url, 
+                       header = TRUE,
+                       stringsAsFactors = FALSE)
+```
+
+## Question 3
+```{r Q3-object-assignment-for-markdown-calc, echo=FALSE}
+obs <- nrow(df.flights) #number of rows = observations
+fl_col <- ncol(df.flights) #number of columns
+tod <- ifelse(df.flights$dep_delay > 60, TRUE, FALSE) # total flights delayed by more than 1 hr = True i.e 1 otherwise False(0)
+num_tod <- sum(tod) # object assignment to have count (sum b/c binary) of flights
+avg_delay <- sum(df.flights$dep_delay)/obs # calculate average minutes delayed
+```
+
+The dataset contains `r obs` observations (rows) and `r fl_col` columns. Each row is information about a flight, including departure and departure delay information. The average mean departure delay is `r ceiling(avg_delay)` minutes.  A total of `r num_tod` flights experienced a delay of more than an hour.
+
+## Question 4
+All flights marked **"T"** under added *isNight* column, indicate a flight's final departure time was actually at night:
+```{r Q4-num-night-fl, echo=FALSE}
+# Hint/ Focus = utilize ifelse(), vector operations, and Relational Operators
+# Goal = determine the hour of departure ; need to add delay to the original departure time
+# delay is in minutes i.e. 60min = 1hr ; determine extra hours to add with the understanding 1:24 are only acceptable options
+
+# add original departure minutes with total minutes delayed (i.e. combined minutes) and divide by 60min to get # hours delayed (decimal form)
+df.flights$delay_hrs <- (df.flights$dep_min + df.flights$dep_delay)/60
+# add total whole hours of delay (i.e condition >= 1) to original departure hour for new departure hour (almost)
+df.flights$new_dep <- ifelse(df.flights$delay_hrs >= 1.0, trunc(df.flights$delay_hrs) , 0 )
+# considered condensing but for my sanity/length I separated code ; but overwrote column object to avoid adding columns 
+# The departure hour can only be a whole integer 1:24, if above reset (i.e. -24hrs) and overwrite previous hour assignment; otherwise leave as original dep_hr
+df.flights$new_dep <- ifelse(df.flights$new_dep > 24, df.flights$new_dep - 24, df.flights$dep_hr)
+
+# thought long on this, but I think I only need conditions to be met for the departure hour (after having derived hours add due to delay)
+# after 7pm is 07:00:01 PM so 0 minutes is allow and similarly in the opposite way before 5am is 04:59:59 AM meaning the unique hour number would never be considered
+
+df.flights$isNight <- ifelse((df.flights$new_dep >= 19 | df.flights$new_dep < 5), "T", "F")
+# printed df.flights to check all new departure hours are values 1:24 and between 19:00-04:59
+# only print the data frame with 'isNight' column added [assumed the instruction wanted this to knit as well]
+df.relevant <- df.flights[,c("flight", "tailnum", "origin","dest", "dep_hr","dep_min","dep_delay","delay_hrs","new_dep","isNight")]
+
+# I assumed you wanted the df output printed since you said to double check, I did include the other columns I created as well
+df.relevant$delay_hrs <- round(df.relevant$delay_hrs, digits = 2)
+#printed the entire database instead of head() since the intructions didn't specify
+df.relevant          
+```

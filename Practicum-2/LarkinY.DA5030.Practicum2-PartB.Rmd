@@ -1,0 +1,1108 @@
+---
+title: "Practicum II / Part B"
+subtitle: "DA5030 / Multiple Linear Regression"
+author: "Larkin, Yvonne"
+date: "Fall 2025 / November 2025"
+output:
+  html_document:
+    df_print: paged
+---
+# PART B : Target `DONATION_AMT` 
+
+## 1. Load Packages
+```{r load_dependencies, warning=FALSE, message=FALSE}
+# packages
+library(ggplot2)
+library(knitr)
+library(caret)
+library(psych)
+```
+
+## 1.1 Load Data
+Extracted data file `donations-salted.csv` from the compressed file linked [donations-salted.csv.zip](https://s3.us-east-2.amazonaws.com/artificium.us/datasets/donations-salted.csv.zip) to locally load data to a data.frame in the R Project. The file has headers, is comma delimited, and has both `numeric` and `character` string class data entries. Use `read.csv( )` to load file into a data.frame `df`. <br><br>
+
+There are only 4 `character` features and 1 `logical` features that would be affected by `stringsAsFactors`, but I will load the data with the parameter `FALSE` to allow for viewing the file as is, avoid the need to undo any factor leveling, and have more control proceeding. I did explore both `TRUE` and `FALSE` loading, overall I think that avoiding the need to change factor levels is easier than starting with them. Especially for ordinal features.
+
+```{r load_csv_file}
+# load file to df
+df <- df.backup <- read.csv("donations-salted.csv",
+               header = TRUE,
+               stringsAsFactors = FALSE)
+
+# confirm df load
+head(df, 3)
+```
+
+### 1.2 Brief EDA with `str()` and `summary()`
+```{r EDA_str}
+str(df) 
+```
+
+```{r EDA_summary}
+summary(df)
+```
+
+## 2. Dataset Information
+### 2.1 Background Information Explicitly Provided or Derived from Following Resources:
+1. Professor Schedlbauer's [Donations Data Dictionary](https://s3.us-east-2.amazonaws.com/artificium.us/datasets/meta-data/donations/donations-salted-meta.html) for explicit list and code notes. 
+    - which provided link to bullet #2
+2. [Donors-Prediction Data on Kaggle Cite](https://www.kaggle.com/datasets/momohmustapha/donorsprediction/data)
+    - 'Discussion' Tab provided link to bullet #3
+3. [Dropbox by Dataset Owner Mustapha Unubi Momoh](https://www.dropbox.com/sh/7jcfj23mjz0uvvc/AABojZ0vMvWjiw1gvSHGOZFha?dl=0)
+
+#### 2.2 Donor Feature Dictionary
+Important Note: All donors in the data set have made at least 1 donation.<br>
+$\text{"donation"} == \text{"gift"}$ ; where $\text{donation} > 0$ by definition
+
+1. ~~CONTROL_NUMBER : *unique* : identifier for each donor~~
+2. ~~DONATED (target variable) : boolean : Donation status for the most recent campaign~~
+    - TRUE = donated
+    - FALSE = did not donate
+3. **DONATION_AMT : not a predictor feature : Practicum II : TARGET**
+4. DONOR_AGE : integer : increment in years for age of the donor
+5. URBANICITY : 7 levels : the “urbanicity” of the donor’s place of residence: 
+    - U = urban
+    - C = city *<small> this was confirmed by the Dropbox </small>*
+    - S = suburban
+    - T = town
+    - R = rural
+    - ? = unknown
+6. DONOR_GENDER : 3 levels : known gender of the donor 
+    - M = male
+    - F = female
+    - U = unknown
+7. HOME_OWNER : 3 levels : whether donor is a home owner or not
+    - H = yes
+    - N = no
+    - U = unknown
+8. INCOME_LEVEL : 7 levels : income rank, exact bracket structure is unknown
+    - 1 (lowest income group)
+    - 2
+    - 3
+    - 4 (middle income group)
+    - 5
+    - 6
+    - 7 (highest income group)
+9. SES : 54 levels : donor's cluster assignment corresponding to socio-economic status
+    - 1 (lowest ses)
+    - ... (value ranks between)
+    - 53 (highest ses)
+    - "." = unknown *(coerced vector to character)*
+10. MEDIAN_HOME_VALUE : median home value in the socio-economic class in which donor resides
+11. MEDIAN_HOUSEHOLD_INCOME : double : median household income in the socio-economic class in which donor resides
+12. DONATION_RESPONSE : number of known times donor has responded to another organization’s donation request
+    - 0 = no known donations
+    - `num` = count of known donations 
+13. MONTHS_SINCE_LAST_GIFT : number of months since last gift was made by campaign cycles to the target organization
+14. EMAILS_12 : number of emails sent to donor in last 12 months
+15. LIFETIME_GIFT_COUNT : number of donations/gifts donor has made to target organization
+    - 1 = minimum donation for each donor on list
+16. LIFETIME_EMAILS : total number of email promotions sent to donor by *target* organization
+17. LIFETIME_GIFT_AMT : total monetary value of all gifts given by a donor
+    - cannot be 0
+    - 'gift' == 'donation'
+18. LIFETIME_MAX_GIFT_AMT : largest gift given by donor (lifetime)
+    - cannot be 0
+    - `num` = maximum monetary value given at one time
+19. LIFETIME_MIN_GIFT_AMT : smallest gift given by donor (lifetime)
+    - cannot be 0
+    - `num` = minimum monetary value given at one time
+20. LIFETIME_AVG_GIFT_AMT : lifetime average gift amount
+    - cannot be 0
+    - `num` = average monetary value of all donations 
+    
+### 2.3 Remove Unneeded Features
+Based on the "DONOR" Data Dictionary, there are definitions for categorical and numeric features. Additionally, it indicates the direct relation of `DONOR` and `DONATION_AMT` so these are not predictors of each other, similar to how Part A had `DONATION_AMT` removed , the same will happen for this part along with `CONTROL_AMT` a completely independent ID number.
+
+#### 2.3.1 Remove Part A Target `DONATED`
+This can be used to at least set a 0 if the 'DONATION_AMT' is `NA` but also `FALSE`
+`DONATION_AMT` : is the quantitative evaluation of a monetary donation made/gifted. If no donation was made value, corresponding to `DONATED` `FALSE`, this indicates it is `0`. This is a feature that is resultant of the target feature `DONATED` being `TRUE`.
+
+```{r check_for_DONATED_indicator}
+test_forFALSE <- df[which(isFALSE(df$DONATED) && is.na(df$DONATION_AMT)),]
+if(nrow(test_forFALSE) == 0){
+  cat("There are no observations that have both :\n\n")
+  cat("`DONATION_AMT` == `NA`&& `DONATED` == `FALSE`\n")
+  test_forFALSE <- df[which(isFALSE(df$DONATED) && df$DONATION_AMT > 0),]
+  
+  if(nrow(test_forFALSE) == 0){
+    cat("OR\n`DONATION_AMT` > 0 && `DONATED` == `FALSE`")
+  }
+} else {
+  cat("There is a contradiction in `DONATED` and `DONATION_AMT` , look into it")
+}
+```
+
+#### 2.3.2 Removed `CONTROL_NUMBER`
+`CONTROL_NUMBER` : unique ID : There are as many unique IDs (`r length(unique(df$CONTROL_NUMBER))`) as there are observations (`r nrow(df)`). This feature is completely independent from a donor's other attributes/features, including whether or not an individual made a donation in the most recent campaign. It could potentially serves as a look-up value to identify distinct donors. However, the row index could serve this same purpose if order preserved. 
+
+```{r remove_both}
+df <- df[,-which(colnames(df) %in% c('CONTROL_NUMBER', 'DONATED'))]
+```
+
+### 2.4 Separate Feature Types by DONOR Data Definitions
+```{r pre_separate}
+donor_numeric_name <- c('DONATION_AMT', 'DONOR_AGE', 'MEDIAN_HOME_VALUE', 'MEDIAN_HOUSEHOLD_INCOME', 'DONATION_RESPONSE', 'MONTHS_SINCE_LAST_GIFT', 'EMAILS_12', 'LIFETIME_GIFT_COUNT', 'LIFETIME_EMAILS', 'LIFETIME_GIFT_AMOUNT', 'LIFETIME_MAX_GIFT_AMT', 'LIFETIME_MIN_GIFT_AMT', 'LIFETIME_AVG_GIFT_AMT')
+donor_numeric_index <- which(colnames(df) %in% donor_numeric_name)
+
+donor_categoric_name <- c('URBANICITY', 'DONOR_GENDER', 'HOME_OWNER', 'INCOME_LEVEL', 'SES') 
+donor_categoric_index <- which(colnames(df) %in% donor_numeric_name)
+```
+
+## Data Wrangling
+
+From the basic `str()` and `summary()` , the data clearly has many `NA` values, speccial character uses, a wide range of values, and most unfortunately a large portion of the Target feature data missing from the 'donations-salted.csv' DONOR Data's csv file. feature structure and meaning have been assessed. A deeper look into missing values, outliers, distribution, and correlation need to be evaluated to clean up the data to be uniform and complete for use in multiple linear regression, if there are too many features entries missing, the need to delete listwise may arise.
+
+## 3. Identify Outliers
+
+For a basic approach, using the mean for the numeric features and mode for the categorical features is my approach. For outliers, I will impute the target `DONATION_AMT`s outliers, I was on the fence about this but I ran it with and without the features imputed and the smoothing did not seem to have a large impact in the model performance from what I observed, however the change from the mean to the trimmed mean did help  to reduce the large peaks later observed on the histograms plotted. This is not necessarily unwelcome because multiple linear regression assumes normality in distribution of the features. Additionally extreme outliers could cause a large impact on the coefficient rate of change for features.  From the `summary()` there is already a large volume of `NA` values in the target, so preserving some actual values would be the most preferable. With this in mind, I will not be trimming the means. I think with the large data set while there is a heavy influence on the mean with outliers, outliers should be broadened to have a higher z-score.
+
+### 3.1 starting mean with `na.rm = T`
+```{r numeric_subset_df}
+df_num <- df[,donor_categoric_index]
+df.mean <- sapply(df_num, mean, na.rm = T)
+cat("Average value in Feature : \n")
+print(round(df.mean))
+```
+
+### 3.2 Calculate Z-score value to define outliers
+$$ \text{z-Score} = \frac{\text{X} - \mu }{sd}$$
+From the `summary()` it is already apparent that there are outliers present in multiple categories, but from some plotting in the R consol IDE it was apparent that extreme values were present and some lines in `LIFETIME` features count be infered, but for the majority it is a high density and wide spread of points polotted. Left leaning tails aren't strongly defined so the change of a log_2 transformation causing a strong linear pattern is unlikely. But for now we'll identify Outliers, missing values, and impute values.
+
+```{r calc_zScore}
+df.zScr <- df_num
+df.zScr <- as.data.frame(lapply(df_num, function(x){
+  col.mean <- mean(x, na.rm = T)
+  col.sd <-sd(x, na.rm = T)
+  col.zScr <- ifelse(!is.na(x), (x - col.mean)/col.sd, NA)
+  return(col.zScr)
+}))
+# confirm correct results
+head(df.zScr, 5)
+```
+
+### 3.3 Number of Outliers by Column
+```{r id_outliers}
+# store outlier index for later
+outliers <- vector('list')
+outlier_values <- vector('list')
+
+for (col in colnames(df.zScr)) {
+  # Find outliers where |z| > 3 for a base eval df.zScr
+  z_Sc <- df.zScr[[col]]
+  idx <- which(abs(z_Sc) > 3)
+  if(length(idx) > 0){
+    cat(col, " has : \n")
+    cat("\t", length(idx), " outliers with z-score > |3.0|\n")
+    
+    # save index
+    outliers[[col]] <- idx
+    outliers_3 <- round(z_Sc[idx], 2)
+    
+    #mean/range
+    mean_zSc <- mean(outliers_3, na.rm = T)
+    abs_mean_zSc <- mean(abs(outliers_3), na.rm = T)
+    cat("\t mean  : ", mean_zSc, "\n")
+    cat("\t abs(z) mean : ", round(abs_mean_zSc, 2), "\n")
+    cat("\t range : [",paste0(range(outliers_3, na.rm = T), 
+                              collapse = ", "),"]\n\n")
+    
+    # store unique value and counts for outliers
+    outlier_values[[col]] <- table(df_num[idx, col], useNA = 'ifany')
+  } else {
+    cat("\n\n", col, " has no outliers. \n\n")
+  }
+}
+```
+
+### 3.4 Outlier Table Counts of Values
+```{r outlier_table}
+for(x in names(outlier_values)){
+  tbl <- outlier_values[[x]]
+  indxMax <- which.max(tbl)
+  indxMin <- which.min(tbl)
+  cat(x, "Feature Outliers: \n")
+  mean_out <- round(mean(df[outliers[[x]], x], na.rm = T),2)
+  cat("\t mean  : ", mean_out, "\n")
+  cat("\t mode  : ", names(tbl)[indxMax] , " with ", max(tbl), " entries\n")
+  
+  values_wo <- df[-outliers[[x]], x]
+  range_wo <- range(values_wo, na.rm = T)
+  mean_wo <- round(mean(values_wo, na.rm = T),2)
+  cat("\t Without Outliers : \n")
+  cat("\t mean : ", mean_wo, "\n")
+  cat("\t range : [",paste0(range(range_wo, na.rm = T), 
+                              collapse = ", "),"]\n\n")
+}
+```
+
+### 3.5 Outier's Range and Number by column
+```{r outlier_values}
+for (col in colnames(df_num)){
+  col_idx <- unlist(outliers[col])
+  out_val <- df_num[col_idx, col]
+  
+  if(length(col_idx) > 0){
+    cat(col, " has outlier : \n")
+    
+    #mean
+    mean_out <- round(mean(out_val, na.rm = T),2)
+    cat("\t mean : ", mean_out, "\n")
+    
+    # range
+    col_out.range <- range(out_val, na.rm = T)
+    
+    cat( "\t outlier's range = [", paste0(col_out.range, 
+                                          collapse = ", "), "] \n\n")
+    
+  } else if(col %in% c('DONATION_AMT', 'INCOME_LEVEL')){
+    
+    cat("\n\n", col, " has no outliers to impute. \n\n")
+  }
+}
+```
+
+### 3.6 Calculate Trimmed Mean to Impute for Outliers
+```{r impute_outliers}
+# initialize ne df to impute
+df.imputed <- df_num
+
+df.imputed <- as.data.frame(lapply(colnames(df_num), function(x){
+  out.val <- unlist(outliers[x])
+  col.mean <- mean(df_num[,x], na.rm = T, trim = 0.1) # mean to impute
+  df.imputed[out.val, x] <- as.integer(col.mean)
+  return(df.imputed[,x])
+  }))
+
+# overwrite colames
+colnames(df.imputed) <- colnames(df_num)
+
+for(c in colnames(df_num)){
+  if(c %in% colnames(df.imputed)){
+    df[,c] <- df.imputed[,c] # impute applied to df
+  }
+}
+
+head(df,3)
+```
+
+The outliers are all typically very far from the feature's mean, so these outliers would have a large impact on the model and should be imputed, the mean untrimmed because of the outliers that are still left in the 'DONATION_ANT' target value. however there are multiple NAs as seen in the head display that will need to be imputed for training.
+
+## 4. Remove Missing Values
+
+###  4.1 `NA` Missing Values
+ From the `str( )`, `summary( )` and preliminary feature overview, there are currently features that correspond to `NA` and empty strings `''`. This means remaining features do *not* have `NA` or `''` values**. There are a few possibilities to explain the *lack* of 'missing values': 
+
+- There are no 'missing values' in those features (unlikely) 
+- There is a *default value* applied to entries of another column because of 
+an equivalency or correlation for no response and the *default*
+- There is a *substitute value* in place to indicate a 'missing value'. 
+
+### 4.2 Number of Missing Values by Feature
+```{r missing_values}
+#initialize object as false for print 
+found <- F
+num.Missing.Values <- vector('numeric', length = ncol(df))
+# save NA for end reference
+df_NAlist <- vector('list')
+
+for(c in colnames(df)){
+  missing.Values <- which(is.na(df[[c]]))
+  num.Missing.Values <- length(missing.Values)
+  
+  if(num.Missing.Values > 0){
+    cat(c, " has ", num.Missing.Values, " missing values.\n")
+    found <- T
+  }else{
+    next
+  }
+  if(c == 'INCOME_LEVEL'){
+    # categories 1:7 impute mode
+    mode.t <- table(df[c])
+    max.modeNOTNA <- names(mode.t)[which.max(mode.t)]
+    df[missing.Values, c] <- max.modeNOTNA
+    cat("\t Impute Mode : ", max.modeNOTNA, " \n\n")
+    } else {
+    # impute mean for numeric that aren't categories
+    df[missing.Values, c] <- as.integer(mean(df[,c], na.rm = T))
+    cat("\t Impute Mean : ", as.integer(mean(df[,c], na.rm = T)), " \n\n")
+    }
+}
+```
+
+Similarly these values that are NA will need to be imputed, the mean will still be used as it serves as somewhat of a smoothing. however the target does have a very high volume of NA which will make the prediction likely unreliable. The feature 'DONATED' after making sure all imputations of NA were not > 0 for any "FALSE" donation responses.
+
+### 4.3.  Substitute `character` Missing Values
+
+Instead of `NA` or `''`, some features appear to have a substitute 'missing value' character ('U' | '?' | '.'), identified with the preliminary ['Donor Feature Dictionary'](https://s3.us-east-2.amazonaws.com/artificium.us/datasets/meta-data/donations/donations-salted-meta.html)'s help. These substitute values will be replaced with t"he numeric mean and the categorical mode respectively"NA" so that easy and consistent identification and imputation can be applied downstream. <br>
+
+- **Notable Exception for "U" assignment:** 
+    - `URBANICITY` : 'U' indicates "Urban" while "?" is the unknown level category of the feature
+    - `DONOR_GENDER` : 'U' in the Data Dictionary is indicated as "unknown"; however in the spirit of inclusivity, the *unknown* will be treated as 'unknown/other/non-binary'.But it will still be used assigned as "NA" for consistency. The feature level is broadened to include any person that does not want to disclose their gender identity, a person who's gender identity is not 'male' or 'female', or a true 'missing value' that was accidentally skipped. Because of this the *missingness* is unknown, it would be difficult to attribute it to a specific cause (random or otherwise) and would make 'U' be more akin to a *default value* if no significant indicator feature that is highly correlation to 'male' or 'female' is found. Either way this will likely make the feature difficult to be helpful in prediction.
+    
+#### 4.3.1 make all Substitute NA values into character "unknown" for easier ID
+```{r substitute_replace_with_NA}
+df.presubstituteNA <- df
+
+# initialize list for substitute NA values
+naSub_list <- vector('list', length = ncol(df))
+
+for(c in donor_categoric_name){
+  
+  if(c %in% c('DONOR_GENDER', 'HOME_OWNER', 'SES')){
+    index_SN <- which(df[,c] %in% c('?', '.', 'U'))
+    value_SN <- unique(df[index_SN, c])
+    cat(c, " substitute NA values : \n")
+    cat("\t total = ", length(index_SN), "\n")
+    cat("\t value = ", value_SN, " \n\n")
+    
+    # substitute
+    df[index_SN,c] <- "unknown"
+    
+  } else if ((c == 'URBANICITY') == T){
+    index_SN <- which(df[,c] %in% c('?', '.'))
+    value_SN <- unique(df[index_SN, c])
+    cat(c, " substitute NA values : \n")
+    cat("\t total = ", length(index_SN), "\n")
+    cat("\t value = ", value_SN, " \n\n")
+    
+    df[index_SN, c] <- "unknown"
+  }
+  
+  tbl <- table(df[[c]])
+  cat(c, " has : \n")
+  cat("\t ", length(tbl), " : unique values categories \n")
+  cat("\t ", max(tbl), " entries = ", names(tbl)[which.max(tbl)], " (mode)\n\n")
+  }
+```
+
+### 4.4 Ideally would have Handled Zero Values More
+Here is a lot of explanation from my first chaotic handling of this practicum, I decided to include it since I did consider these angles even if they were not included in code due to time. <br>
+
+From the `summary( )` features have a minimum value of `0`, upon further evaluation the features with a minimum value equal to `0` had the presence of `0` tallied. While some features appear to make sense, others (while unlikely) are at least possible, but for some features a `0` is impossible. 
+
+####  Likely & Legitimate `0` Value : leave as is
+
+- `DONATION_AMT` is a numeric feature where 0 indicates no donation, DONATED can at least be used to assure that training data has the 0 value set for a FALSE entry.
+
+- `DONATION_RESPONSE` equal to `0` makes sense as the feature evaluate if any *known* contributions to another organization was made by that donor. This information might not be know or the donor did not donated to another organization, either way the starting *default* value would be `0`. Zero will be left as is. 
+
+####  Unlikely & Boarders not-possible : leave `0` for now
+- `DONOR_AGE` **cannot be `0`** as that would be a newborn baby. But any age that corresponds to a **"minor"** (by US cutoff 18) *should be evaluated.*
+    1. There is a possibility a donation was placed with the permission or help of the minor's guardian or even placed by the guardian in honor of the minor. Either way there are possible ways for a minor to contribute to a donation : be it from a guardian or earned income (for minor's above 14 by US regulation to have a job). But this is very unlikely to be recorded under a minor for a donation registrar and are most likely a data entry error. 
+    2. However, `NA` values are already present in the column, indicating that `0` is not a "substitute value", and therefore the idea of *data entry error* is more plausible. Because of this, I do think waiting to change the `0` value to `NA` until after correlation and imputation of `NAs` occur, where these would be handled along with other unlikely values in the "outliers section."
+
+####  Possible Legitimate Value & Potentially "Default" Value : leave `0` for now
+`MEDIAN*` value can only be `0` if no value was reported for the metric being measured since 'median' indicates a middle value between reported upper and lower bounds. This alludes to *two monetary possibilities* : 
+
+1. Either the individual has positive (income) and negative (debt/bills) monetary measures to evaluated, which result in the net value to be `0`. While this is a valid concept, is not really relevant or applicable to the "Donor Data Features" provided. 
+2. This leaves the other possibility: 'median' is derived from (upper and lower bounds), indicating that the *corresponding features it is derived from are `0`.* The corresponding features could potentially have `NA`, where `0` is applied as a default correlated response; but the question of if 1 or Both need to have `NA` to result in `0` due to *missingness*. 
+
+I lean towards `0` is an actual monetary value assessment that is an indication of the correlated features it is derived from, which also means I believe this is a derived calculation rather than manual input for *income* and *home value* that go beyond *missingness.* <br>
+
+I do think a 'default' response for a correlated relationship should still be assessed as `INCOME` is in both the `NA` table and `0` table. However, the default corresponding to a 'missing value' would in a sense make that `0` an indicator of *missingness* itself. Thereby, if it is "missing" it could potentially be assessed with imputation. This would be a problem if the `0` does not indicate 'missing values' and *does in fact represent a legitimate monetary value.* I specifically think this because of the features with the `0` presence with knowledge of the other "Donor Dataset Features" : *income* and *home value* 
+
+- `MEDIAN_HOME_VALUE` : `0` would likely indicate no home *ownership* because if you don't own a home the value is not an indicator of the 'donor' so likely this corresponds to the feature `HOME_OWNER = FALSE`. In which case, the `0` is a monetary assessment  since not owning something has a value of `0`. Having zero present in data will skew the distribution, I was inclined to impute `NA` since `0` is not a good indicator for *missingness* when evaluating the distributions, but imputing `NA` could cause a wrong assessment that a value was not entered and instead a wrongly imputed value might be assign to a person that does not own a home and therefore meant `0` value. 
+- `MEDIAN_HOUSEHOLD_INCOME` : The donor could be a minor or unable to generate income because under 14 work limitations [by U.S.](https://www.dol.gov/general/topic/youthlabor/agerequirements), someone past retirement without an *earned* income where other financial support is not accounted as income, or generally just unemployed. The `0` would likely correspond to a specific level of another feature such as `DONOR_AGE`, `INCOME_LEVEL`, or "SES". Because income already has `NA` values present do not impute `NA` as it would have a different meaning than `0` income, it could also be a 'default' applied if the `INCOME_LEVEL` is `NA` which is currently observed.
+    
+These `0` values have a very high likelihood to correspond with another feature(s), so leaving it as `0` until a correlation to other feature values can be assessed is the best approach. Again if this is treated as a 'default' for 'missingness' it could cause imputation to be applied and alter the true representation of the data. Assessing correlation before imputation to find a best imputation method is best approach. This correlated relation could lead to specific "decision rules" being best over methods like kNN or Naive Bayes. For now, leave as `0` with this in mind.
+
+####  Not Possible : `0` is Missing Value : impute `NA` 
+**`LIFETIME_GIFT_COUNT` = minimum of `r min(df$LIFETIME_GIFT_COUNT)` Donation.** This means that all individuals on this list have donated something in the *lifetime of this list*. This confirms the "Data Dictionary Definition" that `TRUE` and `FALSE` for the `DONATED` feature column is respective to the *most recent campaign*, not an indicator of whether the donor has *ever* donated. This also means that a `0` dollar amount is not possible for any of the `LIFETIME*` features. By definition a donation is a 'gift' and any value  that is `0` cannot be considered a donation contribution, **which means a donation value must be greater than `0` dollars. This means that any derived `LIFETIME` feature below cannot = 0** <br><br>
+ 
+ The indicates that `0` is not a legitimate monetary value and rather represent an "unknown" value that should be handled according to overall missingness and relation to other features. With all `LIFETIME*` Features being derivative calculations of each other, the best approach without compounding correlation (multicollinearity) effect for a predictive model would be to make one of the "monetary assessments" be complete and the utilized predictive feature, where the potential of a complete count of timeframe to be incorporated. <br><br>
+ 
+- `LIFETIME*` features appear to be derived values dependent on other features. The correlation should be evaluated so that all highly correlated "Lifetime*" features are excluded from predictive modeling process. But the highly dependent relationship might prove useful for imputing missing values. These will remain in the `df` for now.<br>
+
+$$\text{LIFETIME_AVG_GIFT_AMT} = \frac{\text{LIFETIME_GIFT_AMT}}{\text{LIFETIME_GIFT_COUNT}}$$
+Therefore :
+$$\text{LIFETIME_GIFT_AMT} = \text{LIFETIME_AVG_GIFT_AMT}\:\times\:\text{LIFETIME_GIFT_COUNT}$$
+
+`LIFETIME_MAX_GIFT_AMT` must be $\geq$ to `LIFETIME_MIN_GIFT_AMT` <br>
+`LIFETIME_MIN_GIFT_AMT` must be $\leq$ to `LIFETIME_MAX_GIFT_AMT`
+
+If :
+$$\text{LIFETIME_MIN_GIFT_AMT} == \text{LIFETIME_MAX_GIFT_AMT}$$
+Then :
+$$ \text{BOTH} == \text{LIFETIME_AVG_GIFT_AMT}$$
+Otherwise `LIFETIME_AVG_GIFT_AMT` is between Both.
+    
+- `LIFETIME_EMAIL_12` : I don't know if `0` emails is possible in this data set but I will presume the minimum is `1`  as part of a "Welcome" or "Thank You" message for the initial donation made that placed the individual in this list. It makes sense as a concept for emails specifically, but also all other `LIFETIME*` features must be `1` at minimum because of the minimum donation given. Therefore the the support range of the feature is likely [1, Inf) though Inf is unrealistic.
+
+## 4.5. EDA Brief overview again
+Have a fresh look at the data overviews to assure that all NA values and speccial characters are handled, as waell as to look at quartile distributions for range of values.
+#### `str()`
+```{r str2}
+str(df)
+```
+
+#### `summary()`
+```{r summary2}
+summary(df)
+```
+Upon a quick review, there are no more NA values or odd formatting within features. <br>
+It has uniform numeric categories : 
+
+- `r paste0(donor_numeric_name, collapse = "<br>- ")` 
+
+and categorical categories which leads to the next task, encoding:
+
+- `r paste0(donor_categoric_name, collapse = "<br>- ")` 
+
+
+## 5. Encode Categorical Variables : Frequency Encode
+
+There are `r length(donor_categoric_name)` Categorical variables identified by the Donor Data Dictionary Definition: 
+
+- `r paste0(donor_categoric_name, collapse = "<br> - ")`
+
+My code is rather redundant here, it is more cleaned in Part A as that was completed after this, but I didn't want to delay submission more so I left my redundancies as in and tried to add commentary and format what was needed.
+
+## 5.0 Counts Tables
+```{r 5.1_encode_counts}
+pairs <- combn(names(df[,donor_categoric_name]), 2, simplify = FALSE)
+pairs_table <- lapply(pairs, function(p) {
+  table(df[[p[1]]], df[[p[2]]])
+  })
+pairs_table_name_match <- pairs
+
+df_catVar <- df[, which(colnames(df) %in% donor_categoric_name)]
+catEncode <- lapply(df_catVar, table)
+```
+
+#### 5.1. SES encode
+```{r freq.encode_ses}
+## encode ses
+ses <- as.data.frame(catEncode[['SES']])
+ses$encode <- ses$Freq/sum(ses$Freq)
+colnames(ses) <- c('lvl','count', 'freq.encode')
+kable(ses, main = "SES Feature Encoding Values")
+```
+
+#### 5.2 INCOME_LEVEL encode
+```{r encode_income_level}
+## encode income_lvl
+incomelvl <- as.data.frame(catEncode[['INCOME_LEVEL']])
+incomelvl$encode <- incomelvl$Freq/sum(incomelvl$Freq)
+colnames(incomelvl) <- c('lvl','count', 'freq.encode')
+kable(incomelvl, main = "'INCOME_LEVEL' Feature Encoding Values")
+```
+
+### 5.3 DONOR_GENDER encode
+```{r freq.encode_gender}
+## encode gender
+gender <- as.data.frame(catEncode[['DONOR_GENDER']])
+gender$encode <- gender$Freq/sum(gender$Freq)
+colnames(gender) <- c('lvl','count', 'freq.encode')
+kable(gender, main = "DONOR_GENDER Feature Encoding Values")
+```
+
+### 5.4 HOME_OWNER encode
+```{r freq.encode_home_owner}
+## encode homeown
+homeown <- as.data.frame(catEncode[['HOME_OWNER']])
+homeown$encode <- homeown$Freq/sum(homeown$Freq)
+colnames(homeown) <- c('lvl','count', 'freq.encode')
+kable(homeown, main = "HOME_OWNER Feature Encoding Values")
+```
+
+### 5.5 URBANICITY encode
+```{r freq.encode_urbanicity}
+## encode urban
+urban <- as.data.frame(catEncode[['URBANICITY']])
+urban$encode <- urban$Freq/sum(urban$Freq)
+colnames(urban) <- c('lvl','count', 'freq.encode')
+kable(urban, main = "URBANICITY Feature Encoding Values")
+```
+
+#### 5.0.1 Append Frequencies to df
+```{r overwirte_df}
+df.preFreqEncode <- df
+
+cat_list <- list(ses, incomelvl, gender, homeown, urban)
+df_correspond_list <- c('SES', 'INCOME_LEVEL', 'DONOR_GENDER', 
+                        'HOME_OWNER', 'URBANICITY')
+
+for(x in 1:length(cat_list)){
+  feat_encoded <- cat_list[[x]]
+  df_feat <- df_correspond_list[x]
+  for(r in 1:nrow(feat_encoded)){
+    idx_freq <- which(df[[df_feat]] == feat_encoded[r,'lvl'])
+    df[idx_freq, df_feat] <- feat_encoded[r, 'freq.encode']
+  }
+  df[[df_feat]] <- as.numeric(df[[df_feat]])
+}
+# confirm
+head(df, 5)
+```
+
+## 6. Eval Multicollinearity
+### 6.1 Every Feature should be a Numeric Value for Pearson's Correlation
+```{r correlation}
+str(df)
+```
+
+### 6.2 Pearson's Correlation Matrix
+```{r pearson_cor_matrix}
+cor_matrix <- cor(df, use = "pairwise.complete.obs", method = "pearson")
+kable(cor_matrix, caption = "Pearson's Correlation Coefficient for Numeric Features")
+```
+
+### 6.3 Pearson's Correlation Quick Reference
+```{r first_interpretable_quick_reference}
+df.zScr_correlation <- as.data.frame(apply(cor_matrix, c(1,2), function(x){
+  new_label <- cut(x,
+                   breaks = c(-Inf, 0.2, 0.4, 0.7, 0.99, 1),
+                   labels = c("-","weak", "moderate", "REMOVE", "(self)"))
+  return(new_label)
+  }))
+# make data frame to print 
+kable(df.zScr_correlation, caption = "CUt off 0.7 for strong ccorrelation")
+```
+
+## 7. Normality : 
+### 7.1 Histogram Plot to see distribution for Normality
+```{r histogram_to_viewNormDist}
+for (i in 1:ncol(df)) {
+  # data column
+  num_feat <- df[[i]]
+  # numeric plotting with ggplot2 T.T
+  np <- ggplot(data.frame(x = num_feat), 
+              aes(x)) +
+    # set bin width to half the sd value of the feature so it is easier to visualize empirical rule
+    geom_histogram(aes(y = ..density..), 
+                   binwidth = sd(num_feat, na.rm = T)/2) +
+    stat_function(fun = dnorm,
+                  args = list(mean = mean(num_feat, na.rm = T), sd = sd(num_feat, na.rm = T)),
+                  color = "red", 
+                  size = 1) +
+    ggtitle(colnames(df)[i]) +
+    theme_minimal()
+  
+  print(np)
+}
+```
+
+### 7.2 Pairs Panels
+```{r first_pairs_panel}
+pairs.panels(df)
+```
+
+#### 7.2.1 Data Seems okay enough for proceeding with out Transform
+Based on the above pairs panel previously it is hard to view the relation but all values outside of the LIFETIME Features have very low correlation but the values are skewed to the right. likely a log transformation would help do to the concentrated peak.
+
+### 7.3 Normalize the data 
+ Use a Log base 2 Transform on Numeric Features, at least to evaluate
+```{r normalize_df}
+df.preNormalizing <- df
+
+df.normalize <- df
+# log(1, base = 2) = 0
+for(col in 1:ncol(df.normalize)) {
+  min_val <- min(df.normalize[[col]], na.rm = TRUE)
+  if (min_val <= 0) {
+    shift <- abs(min_val) + 0.05
+    df.normalize[[col]] <- log(df.normalize[[col]] + shift, base = 2)
+  } else {
+    df.normalize[[col]] <- log(df.normalize[[col]], base = 2)
+  }
+}
+```
+
+#### 7.3.1 Histogram off Normalized
+```{r plot_histograpms}
+## plot normalized
+for (i in 1:ncol(df.normalize)) {
+  # data column
+  num_feat <- df.normalize[[i]]
+  # numeric plotting with ggplot2 T.T
+  np2 <- ggplot(data.frame(x = num_feat), 
+              aes(x)) +
+    # set bin width to half the sd value of the feature so it is easier to visualize empirical rule
+    geom_histogram(aes(y = ..density..), 
+                   binwidth = sd(num_feat, na.rm = T)/2) +
+    stat_function(fun = dnorm,
+                  args = list(mean = mean(num_feat, na.rm = T), sd = sd(num_feat, na.rm = T)),
+                  color = "red", 
+                  size = 1) +
+    ggtitle(colnames(df)[i]) +
+    theme_minimal()
+}
+```
+
+Without printing the graphs Normalization causes a more right hand skew, so proceed without normalizing.
+
+#### 7.3.2 Pairs Plot Normalized Numeric Features : not significantly better
+```{r again_pearson_normalized}
+cor_matrix2 <- cor(df.normalize, use = "pairwise.complete.obs", method = "pearson")
+# make data frame to print 
+kable(cor_matrix2, caption = "Pearson's Correlation Coefficient for Numeric Features")
+```
+
+#### 7.3.3 Quick Reference Pearson's Correlation Matrix
+```{r normalize_pearson_print}
+####  second_interpretable_quick_reference}
+df.zScr_correlation2 <- as.data.frame(apply(cor_matrix2, c(1,2), function(x){
+  new_label <- cut(x,
+                   breaks = c(-Inf, 0.2, 0.4, 0.7, 0.99, 1),
+                   labels = c("-","weak", "moderate", "REMOVE", "(self)"))
+  return(new_label)
+  }))
+# make data frame to print 
+kable(df.zScr_correlation, caption = "CUt off 0.7 for strong ccorrelation")
+```
+
+The normalized Features appear to be more left skewed except the LIFETIME FEATURES those are more like the typical bell-shaped curve in general. But there are also other data that basically shifted to the left side. So based on a cut off of 0.70 or higher some features should be excluded before sampling split the data into training and testing sets.
+
+## 8. FEATURE SELECTION
+
+### 8.1 WHICH FEATURES TO KEEP AND REMOVE
+
+- LIFETIME_AVERAGE_AMT : **keep** : Based on the Numeric Features I will remove Lifetime Max and Min  and instead keep Lifetime Average, this is because it is aa computation with both values and has a high correlation with Max, but also because previously the mean was imputed so while this might seem compounding the Average wasn't imputed as mucch, whereas many max values were reduced and many min values had NA. This makse the Average more ideal.
+
+- LIFETIME_EMAIL : **keep** : this corresponds with both EMAIL_12 but the nature of category and LIFETIME_GIFT_AMT so it would remove two features, and previously the EMAILs were found to have many outliers that were imputed to the mode.But the Gift Count is likely going to be calculated or removed with the other compoundind LIFTETIME features
+
+- MEDIAN_HOME_VALUE : **remove** : this is highly correlated to the 'MEDIAN_HOME_VALUE' and intuitively income seems a better measure for donation expenditure than the house value, plus the HOME_OWNER category had many 'U' "unknown" values initially.
+
+- MEDIAN_HOUSEHOLD_INCOME : strong with MEDIAN_HOME_VALUE removed but moderate with SES in Part A, potentially get rid of after step() AIC eval especially because it is a categorical value
+
+- SES : INCOME_LEVEL : URBANICITY : were all highly correlated so only keeping one is necessary  because SES has and INCOM_LEVEL have one column versus the 5 for URBANICITY. I will remove URBANICITY. Because SES and INCOME_LEVEL are both ordinal that backs the effect similar, but SES has far more categories ranked and with multiple linear regression being  a directional [removed second run] I will keep SES over INCOME_LEVEL but because MEDIAN_HOUSEHOLD_INCOME is staying this does seem redundant, so remove potentially
+
+- DONOR_GENDER and HOME_OWNER both had basically uniform distributions where the the 2 definitive categories were somewhat unbalanced but the "unknown" category make the impact of either basically null.
+ Visually the following 4 features seem to Have Some Visual Trend to the Target
+
+- "DONOR_AGE" 
+- "LIFETIME_GIFT_AMOUNT"
+- "DONATION_RESPONSE"
+- "LIFETIME_AVG_GIFT_AMT" 
+
+But there are quite a few left skewed feature relations
+
+The 4 Features with the most normal distribution appearance are:
+
+- LIFETIME_EMAILS
+- AVG_GIFT_AMT
+- SES
+- MEDIAN_HOUSEHOLD_INCOME
+
+However, these don't have high correlation with each other in a linear fashion.
+
+LIFETIME AVERAGE 
+This has the best visual relation to the target But also can represent the other 2 for elimination.
+I do think the 3 life time values should be combined with the highly similar distributions. After the computation I think going with the actual average feature is better. The distribution is closer to normal and by the range below it shows that the calculated average heavily skews the data to a higher donation value, this is more likely attributed to outliers than anything.
+
+```{ compare_calc_to_avg_col}
+temp <- df_regress$LIFETIME_GIFT_COUNT * df_regress$LIFETIME_AVG_GIFT_AMT
+temp.lf <- (df_regress$LIFETIME_GIFT_AMOUNT - temp)
+mean(temp.lf)
+range(temp.lf)
+```
+
+```{ remove_lifetime_count_and_amt}
+df_regress <- df_regress[,-which(colnames(df_regress) %in% c("LIFETIME_GIFT_COUNT", "LIFETIME_GIFT_AMOUNT"))]
+colnames(df_regress)
+```
+
+### 8.1.1 Features to Keep for Base MODEL
+
+Exclude :
+
+- LIFETIME_FEATURES ARE CALCULATIONS
+  - Only keep one, maybe 2 LIFETIME FEATURES.
+  - weak correlation without log for target and max/avg which relate to other features
+- SES : MEDIAN_HOME_VALUE : MEDIAN_HOUSEHOLD_INCOME	
+  - weak to moderate in log, only keep one
+
+KEEP Untransformed:
+
+DONATION_AMT - target
+DONOR_AGE - life-emails weal
+DONOR_GENDER -none, have U and unbalanced but maybe a specific category will help
+HOME_OWNER -none, have U and unbalanced but maybe a specific category will help
+INCOME_LEVEL -none, have U and unbalanced but maybe a specific category will help
+DONATION_RESPONSE - not on reg
+MONTHS_SINCE_LAST_GIFT -not on reg
+LIFETIME_AVG_GIFT_AMT - most interrelated with other LIFETIME values and weak to target
+
+### 8.2.1 Index Features
+```{r column_select}
+df.premodelUse <- df
+
+keep_columns <- which(colnames(df) %in% c("DONATION_AMT", "DONOR_AGE", "DONOR_GENDER",
+                                          "HOME_OWNER", "INCOME_LEVEL", "DONATION_RESPONSE",
+                                          "MONTHS_SINCE_LAST_GIFT", "LIFETIME_AVG_GIFT_AMT"))
+```
+
+```{r regression_df_base}
+# make data frame for model use
+df_regress <- df[, keep_columns]
+head(df_regress, 10)
+```
+
+### 8.2.2 Pearson's Correlation 
+```{r}
+cor_matrix3 <- cor(df_regress, use = "pairwise.complete.obs", method = "pearson")
+# make data frame to print 
+kable(cor_matrix3, caption = "Pearson's Correlation Coefficient for Numeric Features")
+```
+
+### 8.2.3 Quickview Pearson's :
+```{r third_correlation_reg}
+####  third_interpretable_quick_reference}
+correlation_df_regress <- as.data.frame(apply(cor_matrix3, c(1,2), function(x){
+  new_label <- cut(x,
+                   breaks = c(-Inf, 0.2, 0.4, 0.7, 0.99, 1),
+                   labels = c("-","weak", "moderate", "REMOVE", "(self)"))
+  return(new_label)
+  }))
+
+# make data frame to print 
+kable(correlation_df_regress, caption = "CUt off 0.7 for strong ccorrelation")
+```
+
+## 9. Sample Data
+### 9.1 Bootstrap : Split Data into Training and Sample Data : 80/20
+```{r split_trainin_and_testing}
+set.seed(16) #reproduce
+
+# Training Set
+btstrp_index <- sample(1:nrow(df_regress), round(nrow(df_regress)*0.8), replace = FALSE)
+training_set <- df_regress[btstrp_index,]
+
+# Testing Set Withheld
+validation_withhold_set <- df_regress[-btstrp_index,]
+```
+
+### 9.2 Index for both training and validation withheld
+```{r bootstrap_smaple}
+# BOOTSTRAP TRAINING SET
+# number of desired samples
+n <- round(nrow(training_set)* 0.7) 
+
+# sample with replacement for bagging, 3 vectors of indexes
+sample1 <- btstrp_index1 <- sample(1:nrow(training_set), n, replace = TRUE)
+sample2 <- btstrp_index2 <- sample(1:nrow(training_set), n, replace = TRUE)
+sample3 <- btstrp_index3 <- sample(1:nrow(training_set), n, replace = TRUE)
+
+#  testing
+train_set1 <- training_set[sample1, ]
+train_set2 <- training_set[sample2, ]
+train_set3 <- training_set[sample3, ]
+```
+
+### 9.3 Format lm Equation
+```{r lm_equation}
+mod_feat_original <- colnames(df_regress)[-1]
+equation_reg <- paste("DONATION_AMT ~", paste(mod_feat_original, collapse = " + "))
+cat("\t Call : \n\n", equation_reg)
+```
+
+### 9.4 Evaluate Models Directly Instead of AIC()
+Model:
+<br>
+
+DONATION_AMT ~ DONOR_AGE + DONOR_GENDER + HOME_OWNER + INCOME_LEVEL + DONATION_RESPONSE + MONTHS_SINCE_LAST_GIFT + LIFETIME_AVG_GIFT_AMT
+
+#### 9.4.1 Function Stewise Backward Elimination by p-values for assessment
+```{r backwise_seemed_better_than_manual}
+step_wise_back <- function(model_summary_num, sample_num){
+  # assign model Summary to start
+  mod_summary <- model_summary_num
+  #starting equation
+  equation <- equation_reg # global
+  #starting features
+  mod_feat <- mod_feat_original # global 
+  
+  # define p - values, exclude intercept
+  index_p <- mod_summary$coefficients[-1,4]
+  
+  for(p in 1:length(index_p)){
+    # reassign update p values
+    index_p <- index_p
+    mod_feat <- mod_feat
+    # index model for feature to remove
+    eliminate <- index_p[which(index_p == max(index_p))]
+    
+    #print p-value and feature
+    cat("\n\n Feature with Maximum p-value in model : \n\n")
+    cat("\t", names(eliminate)," = ", eliminate, "\n\n")
+    
+    if(length(mod_feat) == 1) {
+      "No more Features to Eliminate"
+      return(model_trained)
+      break
+      }
+    if(eliminate > 0.05){
+      #update features
+      mod_feat <- mod_feat[-which(mod_feat == names(eliminate))]
+      #update model equation
+      cat("Call Equation : ")
+      equation1 <- paste("DONATION_AMT ~", paste(mod_feat, collapse = " + "))
+      cat("\n\t", equation1, "\n")
+      
+      equation1 <- formula_obj <- reformulate(termlabels = mod_feat, response = "DONATION_AMT")
+      
+      # run model again
+      model_trained <- lm(equation1, data = training_set[sample_num, ])
+      
+      # model summary
+      mod_summary <- summary(model_trained)
+      
+      # reassign index and assign eliminate for next iteration
+      index_p <- mod_summary$coefficients[-1,4]
+      index_p <- index_p[which(index_p == max(index_p))]
+      
+    } else {
+      # print string form
+      cat(" Feature is Significant do not Remove : \n\n")
+      equation1 <- paste("DONATION_AMT ~", paste(mod_feat, collapse = " + "))
+      cat("\t", equation1, "\n\n")
+      
+      # else if p-value is not above 0.05 final model
+      print(mod_summary)
+      return(model_trained)
+      break
+    }
+  }
+}
+```
+
+## 10.1 Model 1:
+### M1 : Starting Point
+```{r subset_model1}
+model_train1 <- lm(DONATION_AMT ~ DONOR_AGE + DONOR_GENDER + HOME_OWNER + 
+                     INCOME_LEVEL + DONATION_RESPONSE + MONTHS_SINCE_LAST_GIFT 
+                   + LIFETIME_AVG_GIFT_AMT,
+                         data = training_set[sample1, ])
+
+mod1_summary <- summary(model_train1)
+print(mod1_summary)
+```
+
+### M1 : Backwary Elimination Findings
+```{r back_mod1}
+model1_backward_eliminate <- step_wise_back(mod1_summary, sample1)
+```
+
+## 10.2 Model 2 :
+### M2 : Starting Point
+```{r subset_model2}
+model_train2 <- lm(DONATION_AMT ~ DONOR_AGE + DONOR_GENDER + HOME_OWNER + 
+                     INCOME_LEVEL + DONATION_RESPONSE + MONTHS_SINCE_LAST_GIFT 
+                   + LIFETIME_AVG_GIFT_AMT,
+                         data = training_set[sample2, ])
+
+mod2_summary <- summary(model_train2)
+print(mod2_summary)
+```
+
+### M2 : Backwards Elimination Findings
+```{r back_mod2}
+model2_backward_eliminate <- step_wise_back(mod2_summary, sample2)
+```
+
+## 10.3 Model 3
+### M3 : Base Model Starting Point
+```{r subset_model3}
+model_train3 <- lm(DONATION_AMT ~ DONOR_AGE + DONOR_GENDER + HOME_OWNER + 
+                     INCOME_LEVEL + DONATION_RESPONSE + MONTHS_SINCE_LAST_GIFT 
+                   + LIFETIME_AVG_GIFT_AMT,
+                         data = training_set[sample3, ])
+
+mod3_summary <- summary(model_train3)
+print(mod3_summary)
+```
+
+### M3 : Backwards Elimination Findings
+```{r back_mod3}
+model3_backward_eliminate <- step_wise_back(mod3_summary, sample3)
+```
+
+## 11. Combine 3 Models:
+Overall there do result in highly correlated distributions, overall this model seems to be compounded for impact on the DONATION_AMT and likely inaccurate.
+```{r model_prediction}
+# returned final model
+# model1_backward_eliminate 
+# model2_backward_eliminate
+# model3_backward_eliminate
+cat("model 1 : \n")
+m1C <- model1_backward_eliminate$coefficients
+m1C
+
+cat("model 2 : \n")
+m2C <- model2_backward_eliminate$coefficients
+m2C
+
+cat("model 3 : \n")
+m3C <- model3_backward_eliminate$coefficients
+m3C
+```
+
+### 11.1  Models for Ensemble 
+```{r ensemble}
+model1 <- lm(DONATION_AMT ~ MONTHS_SINCE_LAST_GIFT + LIFETIME_AVG_GIFT_AMT, data = train_set1)
+model2 <- lm(DONATION_AMT ~ MONTHS_SINCE_LAST_GIFT + LIFETIME_AVG_GIFT_AMT , data = train_set2)
+model3 <- lm(DONATION_AMT ~ HOME_OWNER + MONTHS_SINCE_LAST_GIFT + LIFETIME_AVG_GIFT_AMT , data = train_set3)
+```
+
+### 11.2 Combine Model Average Prediction
+```{r function_ensemble}
+emsemble_function <- function(sample_validation){
+  # make predictions
+  predict1 <- predict.lm(model1, newdata = sample_validation[,-1], interval = 'prediction') 
+  predict2 <- predict.lm(model2, newdata = sample_validation[,-1], interval = 'prediction') 
+  predict3 <- predict.lm(model3, newdata = sample_validation[,-1], interval = 'prediction')
+  
+  # average all 3 (keep row names)
+  combined <- (predict1[, "fit"] + predict2[, "fit"] + predict3[, "fit"]) / 3
+  names(combined) <- rownames(sample_validation)  # restore original indexes
+  return(combined)
+}
+```
+
+### 11.3 Ensemble Predictions : on Withheld Validation Set
+```{r samples_to_predict}
+# value
+sample1_val <- validation_withhold_set[-sample1,]
+sample2_val <- validation_withhold_set[-sample2,]
+sample3_val <- validation_withhold_set[-sample3,]
+```
+
+```{r use_ensemble_predict}
+# calculate
+sample1_ensemble <- emsemble_function(sample1_val)
+sample2_ensemble <- emsemble_function(sample2_val)
+sample3_emsemble <- emsemble_function(sample3_val)
+```
+
+### 11.4 Sampe 1 : Validation Test
+```{r validation1}
+actual <- sample1_val$DONATION_AMT
+predicted <- sample1_ensemble
+cat("Validation Set 1:\nWithheld from Training, when ran in the Ensemble Model : \n")
+rmse <- sqrt(mean((actual - predicted)^2))
+cat("\tRoot Mean Squared Error = ", rmse, "\n")
+
+mae <- mean(abs(actual - predicted))
+cat("\tMean Absolute Error = ", mae, "\n")
+
+
+ss_res <- sum((actual - predicted)^2)
+ss_tot <- sum((actual - mean(actual))^2)
+r_squared <- 3 - (ss_res / ss_tot)
+cat("\tR^2  = ", r_squared, "\n")
+```
+
+### 11.5 Sampe 2 : Validation Test
+```{r validation2}
+actual2 <- sample2_val$DONATION_AMT
+predicted2 <- sample2_ensemble
+cat("Validation Set 2:\nWithheld from Training, when ran in the Ensemble Model : \n")
+rmse2 <- sqrt(mean((actual2 - predicted2)^2))
+cat("\tRoot Mean Squared Error = ", rmse2, "\n")
+
+mae2 <- mean(abs(actual2 - predicted2))
+cat("\tMean Absolute Error = ", mae2, "\n")
+
+
+ss_res2 <- sum((actual2 - predicted2)^2)
+ss_tot2 <- sum((actual2 - mean(actual2))^2)
+r_squared2 <- 1 - (ss_res2 / ss_tot2)
+cat("\tR^2  = ", r_squared2, "\n")
+```
+
+### 11.6 Sampe 3 : Validation Test
+```{r validation3}
+actual3 <- sample3_val$DONATION_AMT
+predicted3 <- sample3_emsemble
+cat("Validation Set 3:\n")
+cat("Withheld from Training, when ran in the Ensemble Model : \n")
+rmse3 <- sqrt(mean((actual3 - predicted3)^2))
+cat("\tRoot Mean Squared Error = ", rmse3, "\n")
+
+mae3 <- mean(abs(actual3 - predicted3))
+cat("\tMean Absolute Error = ", mae3, "\n")
+
+
+ss_res3 <- sum((actual3 - predicted3)^2)
+ss_tot3 <- sum((actual3 - mean(actual3))^2)
+r_squared3 <- 1 - (ss_res3 / ss_tot3)
+cat("\tR^2  = ", r_squared3, "\n")
+```
+
+## 12. Model Evaluation:
+Overall, the aim for a model stats:
+
+- RMSE is as close to 0 as possible, it squares errors so it can drastically inflate the metric if errors are large with the focus on magnitude. Given the high value of money where the minimum value mode was typically $500 if a donation was made, this estimation doesn't seem that bad. It performed a lot better than anticipated.
+
+- Mean Absolute Error: doesn't is considered a more direct comparison so it says that the error in estimates was around $250 dollars.
+
+- $R^{2}$ This is related to the variance for fit of the model, where the goal is close to 1. This model all over with 0.09 to two times 1 for Sample 1, I think it is more related to the correlation in values being 1:1 for some features but also a large class imbalance and extremes values affecting the mean (though drastically reduced with trim). This is indicated by the repeated failed attempts previously with AIC() and some p-value models. But I also think that relates to a code error were a variable got left unassigned from an edit and therefore cause and issue for knit in the new environment.But this is still better than expected.
+
+
+### Reflections with Various Model Fails : Model Training and Feature Reduction
+Below I am leaving some excerpts of results from the trial and error process, ultimately small mistakes of a stray variable "x" singular and alone cost me a bunch of time, but I do think I was able to stay at least a little focused to makes sure to get through this. I know you have the time estimate at 15-25hrs and it says double that if you haven't keep up with the readings but I would like to add that I actually have read and watched all of the lessons and have done so before the deadlines on Tuesday for a majority of the semester. I know that is still behind, but rather I wanted to note that I am making sure to read and watch everything, I do as many of the Textbook practice problems as I can, though sometimes it is difficult to get a copy fo the csv file, I was happy to see them for the Module 09 and 10 Practice levels. Anyway I just wanted to say, I know a downfall of mine is over thinking things, and being too literal or complicated (which relate to other diagnoses) but aside from the stress breakdown about the deadline last week, I do enjoy your class and I hope you know I'm not just a dummy you don't understand the concepts we cover in the course. It's more like I need to tell myself to stop making it complicated. Anyway, thank you for your time and support. I truly appreciate the extension on the assignment. I will be working of the Project Proposal to get that going soon.
+Best Regards,
+Yvonne Larkin
+
+### My Initial Starting Equation : <br><br>
+DONATION_AMT ~ DONOR_AGE + SES + MEDIAN_HOUSEHOLD_INCOME + DONATION_RESPONSE + 
+    MONTHS_SINCE_LAST_GIFT + EMAILS_12 + LIFETIME_AVG_GIFT_AMT
+
+Had Results :
+```
+Call:
+lm(formula = DONATION_AMT ~ DONOR_AGE + SES + MEDIAN_HOUSEHOLD_INCOME + 
+    DONATION_RESPONSE + MONTHS_SINCE_LAST_GIFT + EMAILS_12 + 
+    LIFETIME_AVG_GIFT_AMT, data = training_set)
+
+Coefficients:
+            (Intercept)                DONOR_AGE                      SES  MEDIAN_HOUSEHOLD_INCOME        DONATION_RESPONSE  
+              1.034e+03                2.811e-02               -3.431e+02                4.921e-05                1.967e-01  
+ MONTHS_SINCE_LAST_GIFT                EMAILS_12    LIFETIME_AVG_GIFT_AMT  
+              4.437e+00                3.193e+00                2.458e-01  
+```
+```
+Step:  AIC=187353.7
+DONATION_AMT ~ SES + MEDIAN_HOUSEHOLD_INCOME + MONTHS_SINCE_LAST_GIFT + 
+    EMAILS_12 + LIFETIME_AVG_GIFT_AMT
+```
+BUT AIC step() failed for basically for attempt at the starting model with too much Multicolinearity :
+```
+where idx = sample1, sample2, or sample3
+models_list[[i]] <- lm(DONATION_AMT ~ ., data = training_set[idx,])
+
+Error in step(m.temp, trace = 0) :
+AIC is -infinity for this model, so 'step' cannot proceed
+2.
+stop("AIC is -infinity for this model, so 'step' cannot proceed")
+1.
+step(m.temp, trace = 0)
+```
+```
+# CHANGE FEATURES - because repeated error of NaN or the the model is essentiall linear -Inf AIC()
+#### swapped the EMAIL_12 for LIFETIME_EMAILS
+this is because when I cleared my environment and tried to knit I got a similar error to the AIC() above but had NaN p-values.
+For the sake of continuing lowered p-value for relation and keeping different variables with weak relation to DONATIO_AMT.
+
+keep
+LIFETIME_MAX_GIFT_AMT  weak  correlate to DONATION_AMT with Avg 
+LIFETIME_MIN_GIFT_AMT  will use the Min in place of Avg because more correlations
+DONOR_AGE              uncorrelated to others maybe emails_12
+LIFETIME_EMAILS
+URBANICITY
+URBANICITY                                 
+HOME_OWNER 
+INCOME_LEVEL                       
+
+remove:
+SES                                  
+EMAILS_12                                                                  
+LIFETIME_GIFT_AMOUNT
+MEDIAN_HOUSEHOLD_INCOME                      with SES
+LIFETIME_GIFT_COUNT                          with gift amount
+LIFETIME_AVG_GIFT_AMT
+```
+```
+resulting in many NaN
+```

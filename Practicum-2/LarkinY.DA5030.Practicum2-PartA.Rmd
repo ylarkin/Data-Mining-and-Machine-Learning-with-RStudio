@@ -1,0 +1,1066 @@
+---
+title: "Practicum II / Part A"
+author: "Larkin, Yvonne"
+date: "Fall 2025 / November 2025"
+output:
+  html_document:
+    df_print: paged
+subtitle: 'DA5030 / Decision Tree & Logistic Regression Classification '
+---
+# Part A : Practicum Goal
+
+Create a heterogeneous model made up of a homogeneous logistic regression and pair with a homogeneous random forest model  predict the feature `DONATED`. <br>
+
+## 1. Load Packages
+```{r load_dependencies, warning = F, message=FALSE}
+library(ggplot2)
+library(knitr)
+library(caret)
+library(randomForest)
+library(pROC)
+```
+
+## 1.2 Load Data
+Extracted data file `donations-salted.csv` from the compressed file linked [donations-salted.csv.zip](https://s3.us-east-2.amazonaws.com/artificium.us/datasets/donations-salted.csv.zip) to locally load data to a data.frame in the R Project. The file has headers, is comma delimited, and has both `numeric` and `character` string class data entries. Use `read.csv( )` to load file into a data.frame `df`. <br><br>
+
+There are only 4 `character` features and 1 `logical` features that would be affected by `stringsAsFactors`, but I will load the data with the parameter `FALSE` to allow for viewing the file as is, avoid the need to undo any factor leveling, and have more control proceeding. I did explore both `TRUE` and `FALSE` loading, overall I think that avoiding the need to change factor levels is easier than starting with them. Especially for ordinal features.
+
+```{r load_csv}
+df <- df.backup <- read.csv("donations-salted.csv",
+                            header = TRUE,
+                            stringsAsFactors = FALSE)
+
+# confirm df load
+head(df, 3)
+```
+
+## 1.3 Dataset Information
+### Background Information Explicitly Provided or Derived from Following Resources:
+1. Professor Schedlbauer's [Donations Data Dictionary](https://s3.us-east-2.amazonaws.com/artificium.us/datasets/meta-data/donations/donations-salted-meta.html) for explicit list and code notes. 
+    - which provided link to bullet #2
+2. [Donors-Prediction Data on Kaggle Cite](https://www.kaggle.com/datasets/momohmustapha/donorsprediction/data)
+    - 'Discussion' Tab provided link to bullet #3
+3. [Dropbox by Dataset Owner Mustapha Unubi Momoh](https://www.dropbox.com/sh/7jcfj23mjz0uvvc/AABojZ0vMvWjiw1gvSHGOZFha?dl=0)
+
+#### Donor Feature Dictionary
+Important Note: All donors in the data set have made at least 1 donation.<br>
+$\text{"donation"} == \text{"gift"}$ ; where $\text{donation} > 0$ by definition
+
+1. ~~CONTROL_NUMBER : *unique* : identifier for each donor~~
+2. **DONATED (target variable) : boolean : Donation status for the most recent campaign**
+    - TRUE = donated
+    - FALSE = did not donate
+3. ~~DONATION_AMT : not a predictor feature : Practicum II : Part B Target~~
+4. DONOR_AGE : integer : increment in years for age of the donor
+5. URBANICITY : 7 levels : the “urbanicity” of the donor’s place of residence: 
+    - U = urban
+    - C = city *<small> this was confirmed by the Dropbox </small>*
+    - S = suburban
+    - T = town
+    - R = rural
+    - ? = unknown
+6. DONOR_GENDER : 3 levels : known gender of the donor 
+    - M = male
+    - F = female
+    - U = unknown
+7. HOME_OWNER : 3 levels : whether donor is a home owner or not
+    - H = yes
+    - N = no
+    - U = unknown
+8. INCOME_LEVEL : 7 levels : income rank, exact bracket structure is unknown
+    - 1 (lowest income group)
+    - 2
+    - 3
+    - 4 (middle income group)
+    - 5
+    - 6
+    - 7 (highest income group)
+9. SES : 54 levels : donor's cluster assignment corresponding to socio-economic status
+    - 1 (lowest ses)
+    - ... (value ranks between)
+    - 53 (highest ses)
+    - "." = unknown *(coerced vector to character)*
+10. MEDIAN_HOME_VALUE : median home value in the socio-economic class in which donor resides
+11. MEDIAN_HOUSEHOLD_INCOME : double : median household income in the socio-economic class in which donor resides
+12. DONATION_RESPONSE : number of known times donor has responded to another organization’s donation request
+    - 0 = no known donations
+    - `num` = count of known donations 
+13. MONTHS_SINCE_LAST_GIFT : number of months since last gift was made by campaign cycles to the target organization
+14. EMAILS_12 : number of emails sent to donor in last 12 months
+15. LIFETIME_GIFT_COUNT : number of donations/gifts donor has made to target organization
+    - 1 = minimum donation for each donor on list
+16. LIFETIME_EMAILS : total number of email promotions sent to donor by *target* organization
+17. LIFETIME_GIFT_AMT : total monetary value of all gifts given by a donor
+    - cannot be 0
+    - 'gift' == 'donation'
+18. LIFETIME_MAX_GIFT_AMT : largest gift given by donor (lifetime)
+    - cannot be 0
+    - `num` = maximum monetary value given at one time
+19. LIFETIME_MIN_GIFT_AMT : smallest gift given by donor (lifetime)
+    - cannot be 0
+    - `num` = minimum monetary value given at one time
+20. LIFETIME_AVG_GIFT_AMT : lifetime average gift amount
+    - cannot be 0
+    - `num` = average monetary value of all donations 
+    
+## 2.. Preliminary EDA
+### 2.1 str()
+```{r EDA_str}
+str(df) 
+```
+
+### 2.2 summary()
+```{r EDA_summary}
+summary(df)
+```
+
+### 2.3 Remove Unnecessary Features
+The `df` created from the "donations-salted.csv" file results in **`r dim(df)[1]` observations** and **`r dim(df)[2]` features.**
+
+### 2.2. Removed : Part B Target `DONATION_AMT`  
+`DONATION_AMT` : quantitative evaluation of a monetary donation made, if no donation was made value is 0. This is a feature that is resultant of the target feature `DONATED` being `TRUE`. Because the current target feature being `FALSE` is a direct indication of `DONATION_AMT` being set to $0, and othermise greater than 0 if `TRUE`; this is not be a beneficial *predictor* feature to create a prediction model. Thus it was removed.
+
+### 2.3. Removed : `CONTROL_NUMBER` 
+`CONTROL_NUMBER` : unique ID : There are as many unique IDs (`r length(unique(df$CONTROL_NUMBER))`) as there are observations (`r nrow(df)`). This feature is completely independent from a donor's other attributes/features, including whether or not an individual made a donation in the most recent campaign. It could potentially serves as a look-up value to identify distinct donors. However, the row index could serve this same purpose if order preserved, to maintain identification in case row order is mixed up I will assign the `CONTROL_NUMBER` to the `rownames( )` because it could be helpful to evaluate results to original data. However, due to the completely independent and unique assignment to donor, this feature has no *predictive* power for target `DONATED` and will be removed as a feature.
+
+```{r removed_unneeded_columns}
+df <- df[,-which(colnames(df) %in% c('CONTROL_NUMBER', 'DONATION_AMT'))]
+```
+
+### 2.4 Separate Feature Types by `DONOR` Data Definitions
+```{r pre_separate}
+# target
+target_feature <- c('DONATED')
+target_index <- which(colnames(df) %in% target_feature)
+
+# numeric . 'continuous
+donor_numeric_name <- c('DONOR_AGE', 'MEDIAN_HOME_VALUE', 'MEDIAN_HOUSEHOLD_INCOME', 
+                        'DONATION_RESPONSE', 'MONTHS_SINCE_LAST_GIFT', 'EMAILS_12', 
+                        'LIFETIME_GIFT_COUNT', 'LIFETIME_EMAILS', 'LIFETIME_GIFT_AMOUNT', 
+                        'LIFETIME_MAX_GIFT_AMT', 'LIFETIME_MIN_GIFT_AMT', 'LIFETIME_AVG_GIFT_AMT')
+donor_numeric_index <- which(colnames(df) %in% donor_numeric_name)
+
+#categorical
+donor_categoric_name <- c('URBANICITY', 'DONOR_GENDER', 'HOME_OWNER', 'INCOME_LEVEL', 'SES') 
+donor_categoric_index <- which(colnames(df) %in% donor_categoric_name)
+
+ordinal_features <- c('INCOME_LEVEL', 'SES')
+ordinal_index <- which(colnames(df) %in% ordinal_features)
+
+nominal_features <- c('URBANICITY', 'DONOR_GENDER', 'HOME_OWNER')
+nominal_index <- which(colnames(df) %in% nominal_features)
+```
+
+With the `summary()` there are 3 features with NA's apparent and a mixture of feature types with classes : `integer`, `double`, `character`, and `logical` for the target. The summary also indicates that multiple featurees have a wide range of values, but there are no negative values with the minimum often at 0. With the basic numeric values for the 'donations-salted.csv' Donor Data assessed, a quick look at a correlation of pairs plot would be goo to see if there are any distinct patterns. With a large volume of 20 features this will likely result in a lot of print outs. For now a `pairs` plot can give a general basis. A deeper look into missing values, outliers, distribution, and correlation need to be evaluated to clean up the data to be more uniform and complete for use in model training and evaluation. 
+
+### 2.5 Visualize Data with `pairs`
+```{r overview_pairs_plots}
+pairs(df[, donor_numeric_index])  # Scatterplot matrix
+```
+
+From the pairs plot it is already apparent that there are outliers present in multiple categories, but also that there doesn't seem to be a very distinct linear relation for any of the categories. 'EMIALS_12' and 'LIFETIME_GIFT_COUNT' do appear to have a clustered ares of partial positive linear relation, but for the most part there are high density concentrations and more uniform distribution. Left leaning tails aren't strongly defined so the change of a log_2 transformation causing a strong linear pattern is unlikely. Luckily, logistic Regression does not assume normality for data distribution but it does assume that a linear relations post a *"link function"* is present to shape data typically of a normal, binomial, poisson, or gamma distribution. Which there . There is an apparent division in data , particularly in the fourth column, 'DONATION_RESPONSE' and the bottom 4 rows related to 'LIFETIME_*_AMT' features. But for now we'll identify Outliers, missing values, and impute values.
+
+## 3. Identify Outliers
+### 3.1 Basic Approah to Imputation with `mean(df$x, `na.rm = T)`
+```{r numeric_subset_df}
+# data frame of just numeric features
+df_num <- df[,donor_numeric_index]
+df.mean <- sapply(df_num, mean, na.rm = T)
+
+kable(round(df.mean), caption = "Average Value for Numeric Features : ")
+```
+
+### 3.2 Calculate Z-score Value to identify Outliers
+$$ \text{z-Score} = \frac{\text{X} - \mu }{sd}$$
+
+```{r calc_zScore}
+df.zScr <- df_num
+# new data frame copy to cal to
+df.zScr <- as.data.frame(lapply(df_num, function(x){
+  # remove NA
+  col.mean <- mean(x, na.rm = T)
+  col.sd <- sd(x, na.rm = T)
+  col.zScr <- ifelse(!is.na(x), (x - col.mean)/col.sd, NA)
+  return(col.zScr)
+}))
+# confirm correct results
+head(df.zScr, 5)
+```
+
+### 3.3 Number of Outliers by Column
+print out of basic feature states with and without outliers present to see estimated impact.
+```{r id_outliers}
+# store outlier index for later
+outliers <- vector('list')
+outlier_values <- vector('list')
+
+for (col in colnames(df.zScr)) {
+  # Find outliers where |z| > 3 for a base eval df.zScr
+  z_Sc <- df.zScr[[col]]
+  idx <- which(abs(z_Sc) > 3)
+  if(length(idx) > 0){
+    cat(col, " has : \n")
+    cat("\t", length(idx), " outliers with z-score > |3.0|\n")
+    
+    # save index
+    outliers[[col]] <- idx
+    outliers_3 <- round(z_Sc[idx], 2)
+    
+    #mean/range
+    mean_zSc <- mean(outliers_3, na.rm = T)
+    abs_mean_zSc <- mean(abs(outliers_3), na.rm = T)
+    cat("\t mean  : ", mean_zSc, "\n")
+    cat("\t abs(z) mean : ", round(abs_mean_zSc, 2), "\n")
+    cat("\t range : [",paste0(range(outliers_3, na.rm = T), 
+                              collapse = ", "),"]\n\n")
+    
+    # store unique value and counts for outliers
+    outlier_values[[col]] <- table(df_num[idx, col], useNA = 'ifany')
+  } else {
+    cat(col, " has no outliers. \n\n")
+  }
+}
+```
+
+Overall the means of the z-score s are near 3-4 , with the exception of `LIFETIME` features leaning towards the 5.5-6.5 area. Looking at the corresponding values ould help assess if the z-Score should be shifted.
+
+### 3.4 Outlier Counts for Numeric Features using `table()`
+Mean, mean without outliers, and range can help give a sense of the data's central tendency and if the outliers are heavily skewing the average.
+```{r outlier_table}
+for(x in names(outlier_values)){
+  # tally buy unique value
+  tbl <- outlier_values[[x]]
+  
+  indxMax <- which.max(tbl)
+  indxMin <- which.min(tbl)
+  
+  cat(x, "Feature Outliers: \n\n")
+  mean_out <- round(mean(df[outliers[[x]], x], na.rm = T),2)
+  cat("\t outlier mean  : ", mean_out, "\n")
+  cat("\t mode  : ", names(tbl)[indxMax], " with ", max(tbl), " entries\n\n")
+  
+  mean_ov <- mean(df[[x]], na.rm = T)
+  cat("\t Overall mean : ", mean_ov, "\n\n")
+  
+  values_wo <- df[-outliers[[x]], x]
+  range_wo <- range(values_wo, na.rm = T)
+  mean_wo <- round(mean(values_wo, na.rm = T),2)
+  
+  cat("\t Without Outliers : \n")
+  cat("\t\t mean : ", mean_wo, "\n")
+  cat("\t\t range : [",paste0(range(range_wo, na.rm = T), 
+                              collapse = ", "),"]\n\n")
+}
+```
+
+The features where numeric are primarily integer values and somewhat limited. Looking at the frequency count fo r a general comparison to the mean. When looking at the outlier values, they do appear to be legitimate outlier values far from the mean, but the feature column calculated with and without outliers present, show a fairly similar value that smooths out the drastic values almost as though a ounter balance of extremes is happening in the data. Mean and Mode will be used to impute the missing values.
+
+### 3.6 Calculate Mean to Impute for Outliers
+```{r impute_outliers}
+# initialize ne df to impute
+df.imputed <- df_num
+
+df.imputed <- as.data.frame(lapply(colnames(df_num), function(x){
+  out.val <- unlist(outliers[x])
+  # mean to impute
+  col.mean <- mean(df_num[,x], na.rm = T) 
+  df.imputed[out.val, x] <- as.integer(col.mean)
+  return(df.imputed[,x])
+  }))
+
+# overwrite colnames
+colnames(df.imputed) <- colnames(df_num)
+
+for(c in colnames(df_num)){
+  if(c %in% colnames(df.imputed)){
+    df[,c] <- df.imputed[,c] # impute applied to df
+  }
+}
+# confirm appended to main df correctly
+head(df,3)
+```
+
+The outliers are all features typically very far from the feature's mean, so these outliers typically would have a large impact on the model and should be imputed, the untrimmed mean was imputed for all features with outliers. Now that outliers fare imputed, time to address the multiple NAs as seen in the `summary()` printout and even the `head(df)` prints. 
+
+## 4. Remove Missing Values
+GLM does not handle `NA` values and so they need to be addressed, while Decision Trees and Random Forest by extension have some leeway with `NA` values, the data will be used on both models os the `NA`s will be handled the same way for both with mode imputation to ccategorical and mean to numeric.
+
+###  4.1 `NA` Missing Values
+ From the `str( )`, `summary( )` and preliminary feature overview, there are currently 3 features that correspond to "NA's". This means the remaining features do *not* have `NA` or `''` values. Either that or there are a few possibilities to explain the *lack* of 'missing values': 
+
+- There are no "missing values" in those features (unlikely) 
+- There is a *default value* applied to entries of another column because of 
+an equivalency or correlation for no response and the *default*
+- There is a *substitute value* in place to indicate a 'missing value'. 
+
+### 4.2 Number of Missing Values by Feature
+```{r missing_values}
+#initialize object as false for print 
+found <- F
+num.Missing.Values <- vector('numeric', length = ncol(df))
+# save NA for end reference
+df_NAlist <- vector('list')
+
+for(c in colnames(df)){
+  missing.Values <- which(is.na(df[[c]]))
+  num.Missing.Values <- length(missing.Values)
+  
+  if(num.Missing.Values > 0) {
+    cat(c, " has ", num.Missing.Values, " missing values.\n")
+    found <- T
+  } else {
+    next
+  }
+  
+  if(c %in% donor_categoric_name){
+    # categories impute mode
+    mode.t <- table(df[c])
+    max.modeNOTNA <- names(mode.t)[which.max(mode.t)]
+    df[missing.Values, c] <- max.modeNOTNA
+    cat("\t Impute Mode : ", max.modeNOTNA, " \n")
+    cat("\t `NA` accounts for : ",(length(missing.Values)/nrow(df))*100,
+        "% of the feature\n\n")
+    } else {
+    # impute mean for numeric that aren't categories
+    df[missing.Values, c] <- as.integer(mean(df[,c], na.rm = T))
+    cat("\t Impute Mean : ", as.integer(mean(df[,c], na.rm = T)), " \n")
+    cat("\t `NA` accounts for : ",(length(missing.Values)/nrow(df))*100,
+        "% of the feature\n\n")
+    }
+}
+```
+
+Make sure to loop numeric and categorical variables by different criterion for imputation. 
+
+### 4.3.  Substitute `character` Missing Values
+
+Instead of `NA` or `''`, some features appear to have a substitute 'missing value' character ('U' | '?' | '.'), identified with the preliminary ['Donor Feature Dictionary'](https://s3.us-east-2.amazonaws.com/artificium.us/datasets/meta-data/donations/donations-salted-meta.html)'s help. These substitute values will be replaced with t"he numeric mean and the categorical mode respectively"NA" so that easy and consistent identification and imputation can be applied downstream. <br>
+
+- **Notable Exception for "U" assignment:** 
+    - `URBANICITY` : 'U' indicates "Urban" while "?" is the unknown level category of the feature
+    - make all Substitute "NA" values into character **"unknown"** for easier ID and hangling later
+    
+### 4.4 `Zero` values in Features (Ideal I would have imputed some but left for the sake of time)
+
+From the `summary( )` features have a minimum value of `0`, upon further evaluation the features with a minimum value equal to `0` had the presence of `0` tallied. While some features appear to make sense, others (while unlikely) are at least possible, but for some features a `0` is impossible. 
+
+####  Likely & Legitimate `0` Value : leave as is
+
+- `DONATION_AMT` is a numeric feature where 0 indicates no donation, DONATED can at least be used to assure that training data has the 0 value set for a FALSE entry.
+
+- `DONATION_RESPONSE` equal to `0` makes sense as the feature evaluate if any *known* contributions to another organization was made by that donor. This information might not be know or the donor did not donated to another organization, either way the starting *default* value would be `0`. Zero will be left as is. 
+
+####  Unlikely & Boarders not-possible : leave `0` for now
+- `DONOR_AGE` **cannot be `0`** as that would be a newborn baby. But any age that corresponds to a **"minor"** (by US cutoff 18) *should be evaluated.*
+    1. There is a possibility a donation was placed with the permission or help of the minor's guardian or even placed by the guardian in honor of the minor. Either way there are possible ways for a minor to contribute to a donation : be it from a guardian or earned income (for minor's above 14 by US regulation to have a job). But this is very unlikely to be recorded under a minor for a donation registrar and are most likely a data entry error. 
+    2. However, `NA` values are already present in the column, indicating that `0` is not a "substitute value", and therefore the idea of *data entry error* is more plausible. Because of this, I do think waiting to change the `0` value to `NA` until after correlation and imputation of `NAs` occur, where these would be handled along with other unlikely values in the "outliers section."
+
+####  Possible Legitimate Value & Potentially "Default" Value : leave `0` for now
+`MEDIAN*` value can only be `0` if no value was reported for the metric being measured since 'median' indicates a middle value between reported upper and lower bounds. This alludes to *two monetary possibilities* : 
+
+1. Either the individual has positive (income) and negative (debt/bills) monetary measures to evaluated, which result in the net value to be `0`. While this is a valid concept, is not really relevant or applicable to the "Donor Data Features" provided. 
+2. This leaves the other possibility: 'median' is derived from (upper and lower bounds), indicating that the *corresponding features it is derived from are `0`.* The corresponding features could potentially have `NA`, where `0` is applied as a default correlated response; but the question of if 1 or Both need to have `NA` to result in `0` due to *missingness*. 
+
+I lean towards `0` is an actual monetary value assessment that is an indication of the correlated features it is derived from, which also means I believe this is a derived calculation rather than manual input for *income* and *home value* that go beyond *missingness.* <br>
+
+I do think a 'default' response for a correlated relationship should still be assessed as `INCOME` is in both the `NA` table and `0` table. However, the default corresponding to a 'missing value' would in a sense make that `0` an indicator of *missingness* itself. Thereby, if it is "missing" it could potentially be assessed with imputation. This would be a problem if the `0` does not indicate 'missing values' and *does in fact represent a legitimate monetary value.* I specifically think this because of the features with the `0` presence with knowledge of the other "Donor Dataset Features" : *income* and *home value* 
+
+- `MEDIAN_HOME_VALUE` : `0` would likely indicate no home *ownership* because if you don't own a home the value is not an indicator of the 'donor' so likely this corresponds to the feature `HOME_OWNER = FALSE`. In which case, the `0` is a monetary assessment  since not owning something has a value of `0`. Having zero present in data will skew the distribution, I was inclined to impute `NA` since `0` is not a good indicator for *missingness* when evaluating the distributions, but imputing `NA` could cause a wrong assessment that a value was not entered and instead a wrongly imputed value might be assign to a person that does not own a home and therefore meant `0` value. 
+- `MEDIAN_HOUSEHOLD_INCOME` : The donor could be a minor or unable to generate income because under 14 work limitations [by U.S.](https://www.dol.gov/general/topic/youthlabor/agerequirements), someone past retirement without an *earned* income where other financial support is not accounted as income, or generally just unemployed. The `0` would likely correspond to a specific level of another feature such as `DONOR_AGE`, `INCOME_LEVEL`, or "SES". Because income already has `NA` values present do not impute `NA` as it would have a different meaning than `0` income, it could also be a 'default' applied if the `INCOME_LEVEL` is `NA` which is currently observed.
+    
+These `0` values have a very high likelihood to correspond with another feature(s), so leaving it as `0` until a correlation to other feature values can be assessed is the best approach. Again if this is treated as a 'default' for 'missingness' it could cause imputation to be applied and alter the true representation of the data. Assessing correlation before imputation to find a best imputation method is best approach. This correlated relation could lead to specific "decision rules" being best over methods like kNN or Naive Bayes. For now, leave as `0` with this in mind.
+
+### 4.5 `LIFETIME` Values Are a Highly Interrelated cluster of features
+####  Not Possible to have value `0` therefore a Missing Value : impute `NA` 
+**`LIFETIME_GIFT_COUNT` = minimum of `r min(df$LIFETIME_GIFT_COUNT)` Donation.** This means that all individuals on this list have donated something in the *lifetime of this list*. This confirms the "Data Dictionary Definition" that `TRUE` and `FALSE` for the `DONATED` feature column is respective to the *most recent campaign*, not an indicator of whether the donor has *ever* donated. This also means that a `0` dollar amount is not possible for any of the `LIFETIME*` features. By definition a donation is a 'gift' and any value  that is `0` cannot be considered a donation contribution, **which means a donation value must be greater than `0` dollars. This means that any derived `LIFETIME` feature below cannot = 0** <br><br>
+ 
+The indicates that `0` is not a legitimate monetary value and rather represent an "unknown" value that should be handled according to overall missingness and relation to other features. With all `LIFETIME*` Features being derivative calculations of each other, the best approach without compounding correlation (multicollinearity) effect for a predictive model would be to make one of the "monetary assessments" be complete and the utilized predictive feature, where the potential of a complete count of timeframe to be incorporated. <br><br>
+ 
+- `LIFETIME*` features appear to be derived values dependent on other features. The correlation should be evaluated so that all highly correlated "Lifetime*" features are excluded from predictive modeling process. But the highly dependent relationship might prove useful for imputing missing values. These will remain in the `df` for now.<br>
+
+$$\text{LIFETIME_AVG_GIFT_AMT} = \frac{\text{LIFETIME_GIFT_AMT}}{\text{LIFETIME_GIFT_COUNT}}$$
+Therefore :
+$$\text{LIFETIME_GIFT_AMT} = \text{LIFETIME_AVG_GIFT_AMT}\:\times\:\text{LIFETIME_GIFT_COUNT}$$
+
+$\text{``LIFETIME_MAX_GIFT_AMT` must be $\geq$ to `LIFETIME_MIN_GIFT_AMT`}$ <br>
+$\text{``LIFETIME_MIN_GIFT_AMT` must be $\leq$ to `LIFETIME_MAX_GIFT_AMT`}$<br>
+If :$\text{LIFETIME_MIN_GIFT_AMT} == \text{LIFETIME_MAX_GIFT_AMT}$ <br>
+Then :$ \text{BOTH} == \text{LIFETIME_AVG_GIFT_AMT}$ <br>
+Otherwise : $\text{`LIFETIME_AVG_GIFT_AMT`}$ is between Both.<br>
+    
+- `LIFETIME_EMAIL_12` : I don't know if `0` emails is possible in this data set but I will presume the minimum is `1`  as part of a "Welcome" or "Thank You" message for the initial donation made that placed the individual in this list. It makes sense as a concept for emails specifically, but also all other `LIFETIME*` features must be `1` at minimum because of the minimum donation given. Therefore the the support range of the feature is likely [1, Inf) though Inf is unrealistic.
+
+## 5. Encode Features For GLM and RandomForest
+
+-`r paste(donor_categoric_name, collapse = "<br>- ")`
+
+### 5.0 Make "unkown" Categories Uniform
+
+This will make processing later easier because all true "unknown" categories will have the same label to indicate the same meaning. Except the ordinal 'SES' that is ordinal will get `NA` since GLM requires a numeric input. If anything is a feature factor the `glm()` with one-hot encode the feature automatically which ccan be convenient in some regard, but this will lead to a high dimensional for feature correlation and even just a formula equation. (INCOME_LEVEL had no missing values but also ordinal). Because the `glm()` and Pearson's Correlation Test require numeric data for processing I will use frequency encoding to limit dimensional, provide some meaning of balance without wholly removing categoric leavels or relationships from the Pearson estimated Correlation, as a few of these are categorical features.
+
+```{r substitute_replace_with_NA}
+category_tbl <- vector('list')
+for(c in donor_categoric_name){
+  
+  if(c %in% c('DONOR_GENDER', 'HOME_OWNER', 'SES')){
+    index_SN <- which(df[,c] %in% c('?', '.', 'U'))
+    cat(c)
+    df[index_SN,c] <- ifelse(c %in% ordinal_features, NA, "unknown")
+    
+  } else if ((c == 'URBANICITY') == T){
+    index_SN <- which(df[,c] %in% c('?', '.'))
+    cat(c)
+    df[index_SN, c] <- "unknown"
+  }
+  category_tbl[[c]] <- tbl <- table(df[[c]] , useNA = 'ifany')
+  print(tbl)
+  cat("\t ", length(tbl), " : unique values categories \n")
+  cat("\t ", max(tbl), " entries = ", names(tbl)[which.max(tbl)], " (mode)\n\n")
+  }
+```
+
+##. 5.1 GLM Encoding 
+(aside from target, want numeric inputs)
+
+### 5.1 Target : DONATED : remain `numeric` until after Pearson's Correlation
+```{r encode_target}
+# factor target after pearson correlation ; numeric for test
+df$DONATED <- ifelse(df$DONATED == TRUE, 1, 0)
+```
+
+### 5.2 Categories as Factors
+#### SES and INCOME_LEVEL : Numeric to Keep some Magnitude of Direction
+```{r encode_ordinal}
+## encode SES
+df$SES <- as.numeric(df$SES)
+df$SES[which(is.na(df$SES))] <- 0
+# encode Income Level
+df$INCOME_LEVEL <- as.numeric(df$INCOME_LEVEL)
+```
+
+#### DONOR_GENDER, HOME_OWNER, URBANICITY : frequencies to be Numeric though it will ccause slight ordinality
+```{r encode_frequency}
+df.preFreqEncode <- df
+encode_f <- c('DONOR_GENDER', 'HOME_OWNER', 'URBANICITY')
+for(c in encode_f){
+  col <- df[[c]]
+  values <- table(col)
+  for(v in 1:length(values)){
+    idx <- which(col == names(values)[v])
+    freq <- values[v]/nrow(df)
+    col[idx] <- freq
+  }
+  df[[c]] <- as.numeric(col)
+}
+```
+
+## 6. Multicollinearity
+### 6.1 Pearson's Correlation Matrix :
+Numeric values < 0.4 are 'weak' , (0.4,0.7) are 'moderate' and > 0.7 is 'strong' marked as REMOVE. The data is not needed to be normal for the glm or random forest models, but some linear relation between features after a link function transform in glm is assumed. Random Forest is mainly a split delimiter by axis parallel splits where the end leaf nodes use purity measures to assess model performance. The data set is large so a larger tree is likely needed.
+
+```{r pearson_cor_matrix}
+cor_matrix <- cor(df, use = "pairwise.complete", method = "pearson")
+kable(cor_matrix, caption = "Pearson's Correlation Coefficient for Features")
+```
+
+### 6.2 Pearson's Correlation Quick Reference
+```{r first_interpretable_quick_reference}
+df.Cor_labeled <- as.data.frame(apply(cor_matrix, c(1,2), function(x){
+  new_label <- cut(x,
+                   breaks = c(-Inf, 0.2, 0.4, 0.7, 0.99, 1),
+                   labels = c("-","weak", "moderate", "REMOVE", "(self)"))
+  return(new_label)
+  }))
+# make data frame to print 
+kable(df.Cor_labeled, caption = "Cut off 0.7 for strong ccorrelation\n
+      weak > 0.2 <br>
+      moderate > 0.4 & < 0.7 <br>
+      strong / REMOVE > 0.7", escape = FALSE)
+```
+
+### 6.3 Remove Features and Groupings
+Logistic Regression does not assume normality, but any highly correlated features should be removed ahead of time if possible.
+
+- **MEDIAN_HOME_VALUE** : keep : keep due to a weak relation to 2 of the URBANICITY, moderate with MEDIAN_HOUSEHOLE_INCOME, and INCOME_LEVEL (and removing them instead)
+- **DONATION_RESPONSE**: keep : only relation weak to HOME_YES (HOME_NO grouped) but HOME_YES has another week relation to INCOME_LEVEL (removed already)
+- **LIFETIME_GIFT_AMOUNT** : keep : various relations with EMAIL_12, LIFETIME_GIFT_COUNT, LIFETIME_EMAILS, LIFETIME_GIFT_AMOUNT which are all highly correlated within each other so I will remove them instead
+- **LIFETIME_MIN_GIFT_AMT** : keep : highly correlated with LIFETIME_MAX_GIFT_AMT and LIFETIME_AVG_GIFT_AMT so remove them instead, but no correlation to LIFETIME_GIFT_AMOUNT which was correlated with max and avg
+- **DONOR_AGE** : keep : only weak correlation to LIFETIME_EMAILES (removed already)
+
+```{r features_to_keep}
+keep <- c("DONATED", "DONOR_AGE", "SES", "MEDIAN_HOME_VALUE","DONATION_RESPONSE", "LIFETIME_GIFT_AMOUNT", "LIFETIME_MIN_GIFT_AMT")
+df <- df[ ,which(colnames(df) %in% keep)]
+# confirm
+print(colnames(df))
+```
+
+## Class Imbalance of Target : "No" v. "Yes"
+```{r Donated_target}
+# FALSE  0; TRUE = 1
+plot(as.factor(df$DONATED), main = "Target Feature : DONATED : Class Distribution")
+```
+
+## 7. Bootstrap Sample Data for GLM and Random Forest
+### 7.1. "same size but different subsets" using replacement
+```{r uniform_start_formula}]}
+mod_feat_original <- colnames(df)[-1]
+equation_reg <- paste("DONATED ~", paste(mod_feat_original, collapse = " + "))
+```
+### Starting Model Formula : GLM and Random Forest :
+`r equation_reg`
+
+### 7.2 Split Data into Training and Sample Data : 80/20
+```{r split_trainin_and_testing}
+# reproduce
+set.seed(18)
+# factor DONATED
+df$DONATED <- factor(df$DONATED, levels = c(0, 1), labels = c("No", "Yes"))
+df$DONATED <- relevel(df$DONATED, ref = "Yes")
+```
+
+```{r split80_20}
+# sample index, class imbalance in target
+btstrp_index <- sample(1:nrow(df), round(nrow(df)*0.8), replace = FALSE)
+
+# 80 / 20 original data
+training_set <- df[btstrp_index,]
+validation_withhold_set <- df[-btstrp_index,] # not in model creation
+```
+
+### 7.3 Subsamples : 70/30
+```{r bootstrap_smaple}
+# BOOTSTRAP TRAINING SUBSETS
+
+# sample with replacement for bagging, 3 vectors of indexes
+# with replacement and at 70% of training set
+sample1 <- sample(1:nrow(training_set), round(nrow(training_set)*0.7), replace = TRUE)
+sample2 <- sample(1:nrow(training_set), round(nrow(training_set)*0.7), replace = TRUE)
+sample3 <- sample(1:nrow(training_set), round(nrow(training_set)*0.7), replace = TRUE)
+
+glm_set1 <- training_set[sample1, ]
+glm_set2 <- training_set[sample2, ]
+glm_set3 <- training_set[sample3, ]
+
+glm_test1 <- training_set[-unique(sample1), ]
+glm_test2 <- training_set[-unique(sample2), ]
+glm_test3 <- training_set[-unique(sample3), ]
+```
+
+#### 7.3.1 proportions training set
+```{r check_data_distribution}
+target_counts <- table(training_set$DONATED)
+kable(target_counts, caption = "Training Set Sampled Proportions")
+```
+
+Because of class imbalance weights should be applied to `glm` ahead in relation to the proportion of targets in the data. I did not have time to explore this as the code was giving me issues, I do think the principle of giving more weight to "Yes" over "No is a good concept, but I fear there is something off during my data sampling and processing as the Class Imbalance was predicted in favor of "Yes" == `1` which does not make sense based on the data propoertions, bootstrap sampling method, and principle of probability. But we trek on. Weights could also be introduced within glm() to help account for the class imbalance by giving more weight to "Yes" answers. I did not feel I had time to investigate and trouble shoot the code so this was skipped.
+
+## 8. Train 3 GLM Regression Models on same Equation but different Samples
+```{r}
+glm_modelbase <- glm(DONATED ~ DONOR_AGE + SES + MEDIAN_HOME_VALUE + DONATION_RESPONSE + LIFETIME_GIFT_AMOUNT + LIFETIME_MIN_GIFT_AMT, family =
+                    'binomial', data = training_set)
+# use AIC() step
+use_glm <- step(glm_modelbase, trace = 0)
+use_glm$formula
+use_glm$coefficients
+```
+$$ \log(\mu_i) = \log(\frac{\mu_i}{1-\mu_i}) = {\beta_0 + \beta_1 x_{i1} + \beta_2 x_{i2} + \beta_3 x_{i3} + \beta_4 x_{i4}}$$
+<small> $\beta_0$ = intercept, all other are coefficient values <\small> 
+While I know AIC() uses Aikaike information criterion[^1] to predict error and not the F1 statistic for $\frac{2* precision* recall}{precision + recall}$ (discussed more later) But I used the AIC() in combination with feature selection by pearson to train 3 separate models. Initially I had used step() on each individual model, but I had significant difficulty with the predict and training dimensionality. So in the process of troubleshooting, those versions were  disguarded in the process to progress. The issue I believe was mainly "newdata" I had accidentally typed "newx" and that was something I didn't even realize existed and will give the dimensionallity of the original training set and not the input testing set.
+ [^1]: [AIC for NP-Complete](https://northeastern.instructure.com/courses/226887/assignments/2831466?module_item_id=12382232)
+### 8.1 Model 1
+```{r model1_result}
+cat("Initial Model : \n")
+glm_model1 <- glm(DONATED ~ DONOR_AGE + MEDIAN_HOME_VALUE + DONATION_RESPONSE + 
+                    LIFETIME_GIFT_AMOUNT + LIFETIME_MIN_GIFT_AMT, family = 'binomial', data = glm_set1)
+
+glm_model1$coefficients
+```
+
+### 8.2 Model 2
+```{r model2_result}
+cat("Initial Model : \n")
+glm_model2 <- glm(DONATED ~ DONOR_AGE + MEDIAN_HOME_VALUE + DONATION_RESPONSE + 
+                    LIFETIME_GIFT_AMOUNT + LIFETIME_MIN_GIFT_AMT, family = 'binomial', data = glm_set2)
+
+glm_model2$coefficients
+```
+
+### 8.3 Model 3
+```{r model3_result}
+cat("Initial Model : \n")
+glm_model3 <- glm(DONATED ~ DONOR_AGE + MEDIAN_HOME_VALUE + DONATION_RESPONSE + 
+                    LIFETIME_GIFT_AMOUNT + LIFETIME_MIN_GIFT_AMT, family = 'binomial', data = glm_set3)
+
+glm_model1$coefficients
+```
+
+### 8.4 Combine Resultant Models for Ensemble
+After using step on glm() with the starting models, the resultant models were slightly different. Step does go by AIC() not F1 but because of the backward elimination like Part B I performed this and then calculated F1 based on the various probability threshholds to determine the highest F1 score for use.
+
+## 9. F1 , Precision, and Recall Definitions :
+
+- F Score: $\frac{2* precision* recall}{precision + recall}$  : 
+  - F score is the harmonic mean of precision and recall. It lies between 0 and 1. Higher the value, better the model. 
+
+- Precision :$\frac{TP }{TP + FP}$ : 
+  - It indicates how many values, out of all the predicted positive values, are actually positive.
+
+- Recall : aka Sensitivity : $\frac{TP }{TP + FN}$ : True Positive Rate (TPR) : TPR =  1 - False Negative Rate :
+  - It indicates how many positive values, out of all the positive values, have been correctly predicted. 
+         
+### 9.1 predictions
+```{r model_testing}
+# testing models for F1
+glm_prob1 <- predict(glm_model1, newdata = glm_test1, type = 'response')
+glm_prob2 <- predict(glm_model2, newdata = glm_test2, type = 'response')
+glm_prob3 <- predict(glm_model3, newdata = glm_test3, type = 'response')
+```
+
+### 9.2 Function : F1 calculated at various probability cut-offs
+```{r function_F1_prediction}
+
+f1_at_threshold <- function(test_threshold, predicted_prob, answer_key) {
+
+  pred <- ifelse(predicted_prob >= test_threshold, "Yes", "No")
+
+  # Count confusion matrix directly; T == 1 , na.rm safegaurd sum
+  TP <- sum(pred == "Yes" & answer_key == "Yes", na.rm = TRUE)
+  FP <- sum(pred == "Yes" & answer_key == "No",  na.rm = TRUE)
+  FN <- sum(pred == "No"  & answer_key == "Yes", na.rm = TRUE)
+  # TN <- sum(pred == "No"  & ref == "No",  na.rm = TRUE)  # not needed for F1
+
+  precision <- ifelse((TP + FP) == 0, 0, TP / (TP + FP))
+  recall    <- ifelse((TP + FN) == 0, 0, TP / (TP + FN))
+
+  if ((precision + recall) == 0) {
+    return(0)
+    } else{
+      F1_score <- (2 * precision * recall )/ (precision + recall)
+
+    F1_score <- 2 * precision * recall / (precision + recall)
+  }
+  return(F1_score)
+}
+```
+
+### 9.3 Resultant Probability Thresholds for "Yes" "No"
+All 3 models tested for best F1 threshold in Ensemble model and to give that proportion of weight to the ensemble model's input.
+```{r test_threshold_cutoff_training}
+# truth should be numeric 0/1 vector for the validation labels
+try_threshold <- seq(0.05, 0.95, by = 0.01)
+
+# test each model
+f1_model1 <- sapply(try_threshold, f1_at_threshold, predicted_prob = glm_prob1, answer_key = glm_test1[[1]])
+f1_model2 <- sapply(try_threshold, f1_at_threshold, predicted_prob = glm_prob2, answer_key = glm_test2[[1]])
+f1_model3 <- sapply(try_threshold, f1_at_threshold, predicted_prob = glm_prob3, answer_key = glm_test3[[1]])
+
+# F1 scores max value 
+F1_M1 <- max(f1_model1) 
+F1_M2 <- max(f1_model2) 
+F1_M3 <- max(f1_model3) 
+
+cat("F1 scores for Resultant Models : \n")
+cat("\t",F1_M1,"\n")
+cat("\t",F1_M2,"\n")
+cat("\t",F1_M3,"\n")
+
+# how many equal max; index count 
+f1_count <- which(f1_model1 >= F1_M1) # 52
+f2_count <- which(f1_model2 >= F1_M2) # 51
+f3_count <- which(f1_model3 >= F1_M3) # 50
+
+# best probability cut-off
+# (which.max is first instance)      
+best_thrM1 <- mean(try_threshold[f1_count]) 
+best_thrM2 <- mean(try_threshold[f2_count]) 
+best_thrM3 <- mean(try_threshold[f3_count]) 
+```
+
+The range of probabilities for F1 score performance is wide for the Model 2 and 3 , because Model 1 had a peak performance at 0.56 , I believe model 2 and 3 sampling could just be more fit to the model than is realistic. Because random change is closer to 0.5 probability itself this doesn't seem like an improvement. But I will select the average probability for all F1 scores that were identified as the max performance for models 2 and 3 as 0.05 seems unlikely for a realistic expectation but it has a continuous range and 0.50 is basically a coin flip.9 Evaluate F1 Score of Model for Weights in Ensemble
+
+## 9.4 CrossTables
+### 9.4.1 Model 1
+Both must be factors of the same length for confusion Matrix evaluation, which is how the F1 scores were calculated inside the helper function to find the best probability threshhold.
+```{r Model_1}
+glm_prob1 <- ifelse(glm_prob1 > best_thrM1, "Yes", "No")
+glm_prob1f <- factor(glm_prob1, levels = c("Yes", "No"))
+# confusion matrix with mean threshold
+confusionMatrix(data = glm_prob1f, reference = glm_test1$DONATED, 
+                mode = "prec_recall", positive = "Yes")
+```
+
+### 9.4.2 Model 2
+```{r Model_2}
+glm_prob2 <- ifelse(glm_prob2 > best_thrM2, "Yes", "No")
+glm_prob2f <- factor(glm_prob2, levels = c("Yes", "No"))
+# confusion Matrix with threshhold
+confusionMatrix(data = glm_prob2f, reference = glm_test2$DONATED,  
+                mode = "prec_recall", positive = "Yes")
+```
+
+### 9.4.3 Model 3
+```{r Model_3}
+glm_prob3 <- ifelse(glm_prob3 > best_thrM3, "Yes", "No")
+glm_prob3f <- factor(glm_prob3, levels = c("Yes", "No"))
+# confusion Matrix with threshold
+confusionMatrix(data = glm_prob3f, reference = glm_test3$DONATED, 
+                mode = "prec_recall", positive = "Yes")
+```
+
+The Model Never predicts "No" which is kinda insane considering the class imbalance is skewed towards "No" as plotted previously with a "Yes" = 33.3% and "No" = remaining 66.7%.
+ 
+## 10. Ensemble Function
+
+Created weights to apply to each model using the F1 performance, which was essentially and even split ~ 33.6% which is class to the y-proportion.Overall their performance isn't will a lot of confidence.
+
+```{r function_glm_ensemble}
+glm_ensemble_prob <- function(sample_to_predict) {
+  sample_to_predict[,1] <- factor()
+  # model 1
+  m1_predict <- predict(glm_model1, newdata = sample_to_predict[,-1], 
+                                  type = 'response')
+  wt1 <- F1_M1 /(F1_M1 + F1_M2 + F1_M3) #original 0.394 F1 0.3286 wt
+  
+  # model 2
+  m2_predict <- predict(glm_model2, newdata = sample_to_predict[,-1], 
+                                  type = 'response')
+  wt2 <- F1_M2 /(F1_M1 + F1_M2 + F1_M3) #original 0.405 F1 0.3378 wt
+   
+  # model 3
+  m3_predict <- predict(glm_model3, newdata = sample_to_predict[,-1], 
+                                  type = 'response')
+  wt3 <- F1_M3 /(F1_M1 + F1_M2 + F1_M3) #original 0.400 F1 0.3336 wt
+ 
+  # average all 3 probabilities
+  decision <- ((m1_predict*wt1) + (m2_predict*wt2) + (m3_predict*wt3)) /(wt1 + wt2 + wt3)
+  
+  # return a probability
+  return(decision)
+}
+```
+
+### 10.1 Propability Thresholds for Ensemble Logistic Regression "Yes" "No"
+Test probabilities 0.05 to 0.95 for the highest F1 score, if there are multiple (always in a range) average them for threshold use in ensemble
+```{r test_ensemble}
+# truth should be numeric 0/1 vector for the validation labels
+try_threshold <- seq(0.05, 0.95, by = 0.01)
+
+# test models
+ensemble_prob1 <- glm_ensemble_prob(glm_test1)
+ensemble_prob2 <- glm_ensemble_prob(glm_test2)
+ensemble_prob3 <- glm_ensemble_prob(glm_test3)
+```
+
+```{r f1_glm_ensemble}
+# test each model
+f1_Emodel1 <- sapply(try_threshold, f1_at_threshold, predicted_prob = ensemble_prob1, answer_key = glm_test1)
+f1_Emodel2 <- sapply(try_threshold, f1_at_threshold, predicted_prob = ensemble_prob2, answer_key = glm_test2)
+f1_Emodel3 <- sapply(try_threshold, f1_at_threshold, predicted_prob = ensemble_prob3, answer_key = glm_test3)
+```
+
+### 10.2 Resultant findings : Probability Thresholds for "Yes" "No"
+```{r test_threshold_cutoff}
+# F1 scores max value    
+F1_EM1 <- max(f1_Emodel1)
+F1_EM2 <- max(f1_Emodel2) 
+F1_EM3 <- max(f1_Emodel3) 
+
+cat("F1 scores for Resultant Models : \n")
+cat("\t",F1_EM1,"\n")
+cat("\t",F1_EM2,"\n")
+cat("\t",F1_EM3,"\n")
+
+# how many equal max; index count   original resultant step
+Ef1_count <- which(f1_Emodel1 >= F1_EM1) # 16
+Ef2_count <- which(f1_Emodel2 >= F1_EM2) # 17
+Ef3_count <- which(f1_Emodel3 >= F1_EM3) # 1
+
+# (which.max is first instance)
+best_thrE1 <- mean(try_threshold[Ef1_count])
+best_thrE2 <- mean(try_threshold[Ef2_count]) 
+best_thrE3 <- mean(try_threshold[Ef3_count]) 
+```
+
+### 10.3 Final GLM Ensemble Wts for Logistic Regression
+Weights defined by the model's F1 score so that the better models had more weight for their probability.
+```{r homogeneous_glm_ensemble}
+logistic_ensemble_prob <- function(sample_to_predict) {
+  # model 1
+  Em1_predict <- predict(glm_model1, newdata = sample_to_predict[,-1], type = 'response')
+  
+  # model 2
+  Em2_predict <- predict(glm_model2, newdata = sample_to_predict[,-1], type = 'response')
+  
+  # model 3
+  Em3_predict <- predict(glm_model3, newdata = sample_to_predict[,-1], type = 'response')
+  
+  wt1 <- F1_M1 /(F1_EM1 + F1_EM2 + F1_EM3) 
+  wt2 <- F1_EM2 /(F1_EM1 + F1_EM2 + F1_EM3) 
+  wt3 <- F1_EM3 /(F1_EM1 + F1_EM2 + F1_EM3)
+  
+  # average all 3 probabilities
+  decision <- ((Em1_predict*wt1) + (Em2_predict*wt2) + (Em3_predict*wt3))/(wt1 + wt2 + wt3)
+
+  return(decision)
+}
+```
+
+## 10.0 Evaluate Ensemple as a whole for F1 Score
+```{r eval_with_thetraining_tet_set}
+train_smps <- c(sample1, sample2, sample3)
+unique_test <- training_set[-unique(train_smps),]
+ensemble_predict <- logistic_ensemble_prob(unique_test)
+Emod_glm <- sapply(try_threshold, f1_at_threshold, predicted_prob = ensemble_predict, answer_key = unique_test[[1]])
+```
+
+```{r ensemble_F1_prop}
+# F1 scores max value    
+F1_EMov <- max(Emod_glm)
+
+cat("F1 scores for Resultant Models : \n")
+cat("\t",F1_EMov,"\n")
+
+# how many equal max; index count   original resultant step
+Ef1_count <- which(Emod_glm >= F1_EMov)
+
+# (which.max is first instance)
+ov_Eprobcut <- mean(try_threshold[Ef1_count])
+cat("at probability threshold : \n\t", ov_Eprobcut, "\n")
+```
+The range of probabilities for F1 score performance is wide for the Model 2 and 3 , because Model 1 had a peak performance at 0.56 , I believe model 2 and 3 sampling could just be more fit to the model than is realistic. Because random change is closer to 0.5 probability itself this doesn't seem like an improvement. But I will select the average probability for all F1 scores that were identified as the max performance for models 2 and 3 as 0.05 seems unlikely for a realistic expectation but it has a continuous range and 0.50 is basically a coin flip.
+
+The Model Never predicts "No" which is bad considering the class imbalance is skewed towards "No" as plotted previously with a "Yes" = 33.3% and "No" = remaining 66.7%.
+
+## 11. Random Forest
+
+[Tuning Parameters for trainControl](https://topepo.github.io/caret/model-training-and-tuning.html#model-training-and-parameter-tuning)
+[prSummary](https://topepo.github.io/caret/measuring-performance.html)
+[downSample](https://topepo.github.io/caret/subsampling-for-class-imbalances.html)
+Following advise from the Ch 11 : [Improving Model Performance](https://learning.oreilly.com/library/view/machine-learning-with/9781788295864/ch11s02.html#ch11lvl2sec116)
+```{r random_forest-model}
+# specify resampling of training data; Leave-Group-Out Cross-Validation
+ctrl <- trainControl(method = "LGOCV", # random sampling with exclusion
+                     p = 0.7, # 70% of data for sample
+                     number = 10, # number of sample subsets
+                     selectionFunction = "best",
+                     savePredictions = TRUE, # evaluate results
+                     classProbs = TRUE, # probability like glm
+                     summaryFunction = twoClassSummary) 
+
+# grid to define mtry
+grid_rf <- expand.grid(mtry = c(3, 4, 6))
+
+# random Forest function as supported but caret
+rf_model <- train(DONATED ~ DONOR_AGE + SES + MEDIAN_HOME_VALUE + 
+                         DONATION_RESPONSE + LIFETIME_GIFT_AMOUNT + LIFETIME_MIN_GIFT_AMT, 
+                       data = training_set, # data to resample from
+                       method = "rf", # random forest
+                       ntree = 1000,
+                       metric = "ROC", # want F1 score
+                       trControl = ctrl, # cross validation and prediction output
+                       tuneGrid = grid_rf) # try basically all splits, acts as bagging
+```
+
+### 11.1 Random Forest Output Model
+```{r final_rf_model}
+rf_model$finalModel
+```
+### 11.2 Random Forest F1 Score
+```{r F1_randomF}
+TP <- 176
+FP <- 401
+FN <- 3704
+
+# precision calc
+precision <- ifelse((TP + FP) == 0, 0, TP / (TP + FP))
+# recall calc
+recall    <- ifelse((TP + FN) == 0, 0, TP / (TP + FN))
+
+# calculate F1
+if ((precision + recall) == 0){
+  return(0)
+} else {
+  F1_score <- 2 * precision * recall / (precision + recall)
+}
+F1_score
+```
+
+### 11.3 Evaluate Optimal Threshold for Probability cut off Random Forest
+```{r}
+# test with validation_withhold_set
+rf_predict <- predict(rf_model, newdata = training_set[,-1], type = 'prob')
+
+# column one is "Yes" of the rf predictions
+rf1_test <- sapply(try_threshold, f1_at_threshold, predicted_prob = rf_predict[,1], answer_key = training_set$DONATED)
+```
+
+### 11.4 Evaluate Random Forest Threshhold
+```{r test_threshold_cutoff_randomF}
+# F1 scores max value 
+F1_RM1 <- max(rf1_test)
+cat("Random Forest has a F1 score : \n")
+cat("\t",F1_RM1,"\n")
+
+# how many equal max; index count 
+rf1_count <- which(rf1_test >= F1_RM1) # 1
+
+# best probability cut-off
+# (which.max is first instance)      
+best_thrRM1 <- mean(try_threshold[rf1_count])  # 0.33
+cat("at probability threshhold : \n", best_thrRM1)
+```
+
+## 12. Heterogeneous Ensemble Random Forest and Logistic Regression
+```{r heterogeneous_ensemble}
+final_prediction_func <- function(testing_set){
+  # F1 glm & rf weights by F1
+  wt_RFF <- F1_RM1/(F1_EMov + F1_RM1)
+  wt_GLM <- F1_EMov/(F1_EMov + F1_RM1)
+  
+  # prob cut-0ff
+  glm_pThr <- ov_Eprobcut
+  rf_pThr <- best_thrRM1
+  
+  glm_pred_prob <- logistic_ensemble_prob(testing_set) 
+  rf.pred_prob <- predict(rf_model, newdata = testing_set[,-1], type = "prob")
+  
+  # multiply the model's resultant prop by model wt percent by weight
+  logistic_prob <- glm_pred_prob * wt_GLM
+  randomF_prob <- rf.pred_prob[,1] * wt_RFF
+  
+  # combine probabilities
+  combined_prob <- logistic_prob + randomF_prob
+  
+  #similarly combine threshold as the averaged weighted threshold
+  glm_cutoff <- glm_pThr*wt_GLM
+  rF_cutoff <- rf_pThr*wt_RFF
+  combined_cutoff <- (glm_cutoff + rF_cutoff)/2
+  
+  #decision
+  predictions <- ifelse((combined_prob >= combined_cutoff) == T, "Yes", "No")
+  final_decision <- cbind(combined_prob, predictions)
+  
+  # leave without as.numeric or as.factor until outside the function
+  return(final_decision)
+}
+```
+
+## 12. Model Evaluation
+### 12.1 Model Output after Transform to df with factor (head)
+Weights defined by the model's F1 score so that the better models had more weight for their probability.
+```{r final_ensemble_glm}
+ensemble_predictions <- final_prediction_func(validation_withhold_set)
+df.ensemble <- as.data.frame(ensemble_predictions)
+df.ensemble$combined_prob <- as.numeric(df.ensemble$combined_prob)
+df.ensemble$predictions <- factor(df.ensemble$predictions, levels = c("Yes", "No"))
+
+head(df.ensemble, 10)
+```
+### Ensemble Confusion Matrix : 
+With accuracy at 0.24, kappa = 0, and Balanced Accuraccy = 0.50; overall you'd be better off guessing.
+```{r hererogeneous_ensemble_model}
+ensemble_cm <- confusionMatrix(df.ensemble$predictions, validation_withhold_set$DONATED, positive = "Yes")
+ensemble_cm
+```
+
+### Confusion Matrix but with `mode = "prec_recall"`
+```{r heterogeneous_F1_precision_recall}
+ensemble_cm2 <- confusionMatrix(df.ensemble$predictions, validation_withhold_set$DONATED, mode = "prec_recall", positive = "Yes")
+ensemble_cm2
+```
+As discussed earlier the target F1 is a value close to 1  where the value is determined by the ability to correcctly determine TP FP and FN (TN is not directly involved for F1). Precision and Recall are particularly helpful for imbalanced dat to determine if the majority class is being guessed to inflate accuracy or not, weirdly the under proportioned class is being guessed more, I assume something got flipped like labeling, beccause this is odd.
+
+### ROC - AUC : Area Under the Curve for Probabalistic Modeling
+
+[Chapter 11](https://learning.oreilly.com/library/view/machine-learning-with/9781788295864/ch11.html#ch11lvl1sec49)
+[Copilot Prompt on how to do ROC curve when I don't have 1,0 for the randomForest](https://m365.cloud.microsoft/chat/entity1-d870f6cd-4aa5-4d42-9626-ab690c041429/eyJpZCI6IlZYTmxjbFl4ZkdoMGRIQnpPaTh2YzNWaWMzUnlZWFJsTFdsdWRDNXZabVpwWTJVdVkyOXRMM3hQU1VRNlpUQXhaV1pqT1dFdE9EWmxOQzAwWlRVMkxUZzFOMlF0WldaaU1qa3lNVEk0TTJSa2ZESTFaRGM0TTJRMExXSmhNMll0TkdNM01pMDROMlUwTFRoaE5HWmhaVFV6WXpkaU9Yd3lNREkxTFRFeExUSXpWREF6T2pJek9qUXlMakV5TURnM01UUmEiLCJzY2VuYXJpbyI6InNoYXJlTGlua1ZpYVBvcG92ZXIiLCJwcm9wZXJ0aWVzIjp7InByb21wdFNvdXJjZSI6InVzZXIiLCJjbGlja1RpbWVzdGFtcCI6IjIwMjUtMTEtMjNUMDM6MjM6NDEuNTczWiJ9LCJjaGF0VHlwZSI6IndlYiIsInZlcnNpb24iOjEuMX0) Chapter 11 covers ROC and AUC functions and directs to caret which I used but didn't touch on substitute 'Yes' since I used that for the glm
+```{r ROC_curve}
+# use 1/0 instead of Yes/No
+roc_train <- training_set
+roc_train$DONATED <- factor(roc_train$DONATED, levels = c("Yes","No"), labels = as.numeric(c(1, 0)))
+
+# rF training outside ensemble (Copilot helped to redeclare No/Yes since the RF is internal) : probs_yes and level order opposite
+probs_yes <- rf_predict <- predict(rf_model, newdata = training_set[,-1], type = 'prob')[,'Yes']
+roc_rF <- roc(response = training_set$DONATED, predictor = probs_yes, levels = c("No","Yes")) # Declare order negative, positive
+auc_rF <- auc(roc_rF)
+
+# model fits (were in ensembles so re do)
+glm_model1 <- glm(DONATED ~ DONOR_AGE + MEDIAN_HOME_VALUE + DONATION_RESPONSE + 
+                    LIFETIME_GIFT_AMOUNT + LIFETIME_MIN_GIFT_AMT, family = 'binomial', data = roc_train[sample1,])
+glm_model2 <- glm(DONATED ~ DONOR_AGE + MEDIAN_HOME_VALUE + DONATION_RESPONSE + 
+                    LIFETIME_GIFT_AMOUNT + LIFETIME_MIN_GIFT_AMT, family = 'binomial', data = roc_train[sample2,])
+glm_model3 <- glm(DONATED ~ DONOR_AGE + MEDIAN_HOME_VALUE + DONATION_RESPONSE + 
+                    LIFETIME_GIFT_AMOUNT + LIFETIME_MIN_GIFT_AMT, family = 'binomial', data = roc_train[sample3,])
+
+# predicted probabilities for lass '1'
+prob_glm1 <- predict(glm_model1, type = 'response')
+prob_glm2 <- predict(glm_model2, type = 'response')
+prob_glm3 <- predict(glm_model3, type = 'response')
+
+# model 1 : glm_model1
+roc_glm1 <- roc(response = roc_train[sample1,"DONATED"], predictor =  prob_glm1, levels = c("0", "1"))
+auc_glm1 <- auc(roc_glm1)
+# model 2 : glm_model2
+roc_glm2 <- roc(response = roc_train[sample1,"DONATED"], predictor =  prob_glm2, levels = c("0", "1"))
+auc_glm2 <- auc(roc_glm2)
+# model 3 : glm_model3
+roc_glm3 <- roc(response = roc_train[sample1,"DONATED"], predictor =  prob_glm3, levels = c("0", "1"))
+auc_glm3 <- auc(roc_glm3)
+```
+
+```{r plot_roc}
+plot(roc_glm1, col = "#1f77b4", lwd = 2, main = sprintf("ROC (glm): AUC = %.3f", auc_glm1))
+abline(a = 0, b = 1, lty = 2, col = "gray50")
+plot(roc_glm2, col = "#00FF00", lwd = 2, add = TRUE)
+plot(roc_glm3, col = "#FF0000", lwd = 2, add = TRUE)
+plot(roc_rF, col = "#000000", lwd = 2, add = TRUE)
+```
+
+So while GLM is supposed to be good in theory (as compared to others) obviously the data shape was lacking for this model to truly perform well. I suspect the the distribution was more like Poisson with the need of lambda, I should have stuck with the cv.glm() as that uses an optimized lambda for the link function. But as you can see this glm is not very good at distinguishing between class types (which was the suspicion mentioned earlier for a lack of fluctuation in performance for the model across a wide range of probabilities.)
+
+```{r ensemble_values}
+#F1 glm & rf weights by F1
+wt_RFF <- F1_RM1/(F1_EMov + F1_RM1)
+wt_GLM <- F1_EMov/(F1_EMov + F1_RM1)
+
+# prob cut-0ff
+glm_pThr <- ov_Eprobcut
+rf_pThr <- best_thrRM1
+```
+
+Average F1 Score for GLM Model : <br>
+<t> `r F1_EMov` 
+<t> probability threshold :  `r glm_pThr` 
+<br><br>
+
+F1 scores for Random Forest Model : <br>
+<t> `r F1_RM1` 
+<t> probability threshold :  `r rf_pThr` <br>
+
+[ROC](https://learning.oreilly.com/library/view/machine-learning-with/9781788295864/ch10.html)
+
+
+## 13. Extra Model Eval and Thoughts
+
+  Overall the Generalized Logistic Model Ensemble did not get significantly better or worse across the samples or probability thresholds, likely indicating the same  but this is likely do to the initial feature selection. The random forest did get markedly better with each increase in number of trees (I did the 500, 700, 1000), however the time does go up a lot waiting for the model to run. I would say it was interesting, dealing with a larger set of data, graphs and plots become less helpful for an overview of all of the features because the volume of features reduce the plot size. <br>
+  
+  I decided to use a weighted factor based on teh F1 score calulated performance to apply to the predicted probability. While it is not the same as Lasso or Ridge glm that penalize excess features or multicollinearity directly. The F1 Score weighted does assure that the model with a better performance sore has a higher impact in the resultant model. The two models are not equivalent in scale to say the least, I did not use the `caret` package for the glm model, nor use `cv.glm` from `glmnet`, though I did model from both . Often times my time was being taken by little bugs here and there and then the recurrent loss of my train of thought. But I did my best to stay focused, I likely have > 100 files and at least 20 pages of written notes. I definitely matched various YouTube videos on the concepts of GLM  which I'll link below. I can't say any had code but I did thoughtfully get a better understanding thanks to the YouTube videos. 
+
+I was constantly at my desk, I agree the material itself isn't extremely difficult in terms of concept though some are tricky and I have a tendency to confuse myself and have to backtrack to go step by step. Many issues stems from careless coding errors, bugs, and rabbit holes that cost me lost of time; and of course my tendency to over-complicate things. I have taken what you said to heart to literally just start basic and then build up. When I finally paused and was watching the k-clustering video for the class and the video described the super slow calculated man's decent of the mountain versus the drunk stumbling man, I told myself I need to work on being like the drunk stumbling man and even wrote it in my notes to myself. I truly appreciate the opportunity you have given me to at least submit this Practicum for grading. I really appreciate your guidance and repetitive "C's get degrees". Thank you Professor Schedlbauer. 
+Best Regards,
+Yvonne Larkin
+
+  **References**
+  <br>
+  - [O'REILLY Machine Learning with R - Third Edition] (https://learning.oreilly.com/library/view/machine-learning-with/9781788295864/ch10.html)
+  - [caret documentation online](https://topepo.github.io/caret/train-models-by-tag.html#ROC_Curves)
+  - Multiple Lessons in the course: <br>
+  - [3.442 Ridege and Lasso Regression](http://artificium.us/lessons/03.ml/l-3-442-ridge-lasso-regression/l-3-442.html) <br>
+  - [3.441 Ordinal Least Squares Regression](http://artificium.us/lessons/03.ml/l-3-441-ols-regression/l-3-441.html)
+  - Also rewatched a lot of lessons
+  - Stat Quest with Josh Starmer](https://www.youtube.com/@statquest):
+    - Logistic Regression Part 1, 2, 3
+    - Decision Trees Part 1, 2, 3
+    - Random Forests Part 1, 2
+    - AdaBoost
+  - R Help Window a lot for functions all the timet  to see what arguments are 

@@ -1,0 +1,658 @@
+---
+title: "DA5030 Regression"
+author: "Larkin, Yvonne"
+date: "Fall, 2025 ; October 28, 2025"
+output:
+  html_document:
+    df_print: paged
+subtitle: 'Assignment 07.1 : Multiple Linear Regression'
+---
+
+## 1. Create Project
+Objective : use a multiple linear regression model to predict CPU performance using [cpu_data.csv](https://s3.us-east-2.amazonaws.com/artificium.us/datasets/cpu-data.csv) data file.
+
+```{r load_package_dependencies, warning=FALSE, message=FALSE}
+library("psych") # pairs.plot
+library("caret") # createDataPartition
+library("ggplot2") # ggplot
+library("e1071") # naiveBayes
+```
+
+## 2. Inspect Data
+### 2.1 Load Data to `df`
+Visual inspection of the file show there are no headers, no string values, and delimited by commas.
+```{r 2.1_load_url.csv}
+url <- "https://s3.us-east-2.amazonaws.com/artificium.us/datasets/cpu-data.csv"
+df <- read.csv(url,
+               header = F)
+
+#name columns by feature
+colnames(df) <- c("MYCT", "MbMIN", "MMAX", "CACH", "CHMIN", "CHMAX", "PRP")
+
+#confirm load
+head(df, 10)
+```
+### 2.2 Basic `df` inspection
+```{r 2.2_data_inspect}
+str(df)
+summary(df)
+```
+```{r 2.2_unique_values}
+unique_value_counts <- sapply(df, function(x){length(unique(x))})
+unique_value_counts
+```
+
+#### Information Provided
+We are told the data file contains these columns expressing the following CPU characteristics: <br>
+
+- MYCT: machine cycle time in nanoseconds (integer)
+- MbMIN: minimum main memory in kilobytes (integer)
+- MMAX: maximum main memory in kilobytes (integer)
+- CACH: cache memory in kilobytes (integer)
+- CHMIN: minimum channels in units (integer)
+- CHMAX: maximum channels in units (integer)
+- **PRP**: published relative performance (integer) **(target variable)** <br><br>
+
+Upon loading the data file to `df` we can see there are `r ncol(df)` columns where the above feature names were assigned as corresponding headers, all columns are in fact `integer` class typre, and there are `r nrow(df)` observations. From the `str( )` `head( )` and `summary( )` the values of each column appear to be discrete categories with numeric magnitude that is relevant, and the count of how many unique values are present for each feature does indicate discrete and somewhat limited categories <br><br>
+
+Looking at outputs, the 'Mean' is roughly $2\times$ larger than the 'Median' with a `range` of all 'positive' values. This typically indicates a *'non-normal' distribution* (either that or it has extreme values). But the glimpse of values observed in the data from these features seem to have a *multiplicative  of 4* distinction *to me* so the distribution is unknown immediately and visualization of the data would help determine distribution and any relationship. Especially if this is taken into consideration when looking at the 'Mean' values that are relatively in the middle of '1st Qu.' and '3rd Qu.'values. Lastly, there are **2 'NA'** values in the feature **'CHMIN'**. <br>
+
+### 2.3 Visualization of `df` Features
+```{r 2.3_visualization_df, warning=FALSE, message=FALSE}
+# logic from Decision Tree
+for (i in 1:ncol(df)) {
+  # data column
+  num_feat <- df[[i]]
+  # numeric plotting with ggplot2 T.T
+  np <- ggplot(data.frame(x = num_feat), 
+              aes(x)) +
+    # set bin width to half the sd value of the feature so it is easier to visualize empirical rule
+    geom_histogram(aes(y = ..density..), 
+                   binwidth = sd(num_feat, na.rm = T)/2) +
+    stat_function(fun = dnorm,
+                  args = list(mean = mean(num_feat, na.rm = T), sd = sd(num_feat, na.rm = T)),
+                  color = "red", 
+                  size = 1) +
+    ggtitle(colnames(df)[i]) +
+    theme_minimal()
+  
+  print(np)
+}
+```
+The histogram density functions all have a heavy left skew and high concentration near the mean. It seems somewhat normal but I do think some transformations need to occur first before a linear regression model can be made. The normality should be tested to confirm this and might as well benchmark the correlations with `pairs.panels( )`.
+
+### 2.4 Shapiro-Wilks Test for Normality
+```{r 2.4_data_normality_test}
+#initialize list 
+norm.list <- vector("list", length = ncol(df))
+
+for(c in 1:ncol(df)){
+  norm.list[[c]] <- temp <- shapiro.test(df[,c])
+  print(paste0("Column '", names(df)[c], "' has a W statistic = ", round(temp$statistic, 3), " and p-value = ", formatC(temp$p.value, digits = 3, format = 'fg')))
+}
+```
+Based on the Shapiro-Wilks Test for normality where a W statistic closer to 1 indicates a distribution reflective of *normal distribution* a p-value < 0.05 means that the 'null hypothesis' for a normal distribution is rejected. Because most "W" statistics are closer to 0.5 than 1.0 and the p-values are significantly below 0.05, the null is rejected for normality. This means transformations will be needed to make a multiple-linear regression model.
+
+### 2.5 Correlation Benchmark for Untransformed Data
+```{r 2.5_cor_raw_data}
+pairs.panels(df)
+```
+<br>
+The function `pairs.panels( )` confirms the non-linear relation of features due to the left-skews and non-normal distribution. Looking at the data values following a pattern of doubling (i.e. 2, 4, 8, 16, 32, 64) seems to indicate $x = 2^{y}$ which would be *transformed* using $\log_2( feature )$ and likely a transformation outside of 'Channel' values which are more sequential in value.
+
+## Relevant Domain Knowledge
+Because I have limited domain knowledge with CPU components etc, I did some investigation on the features presented in order to appropriately handle Missing Values and Outliers.I believe some information about the units of measure for digital data should be noted, especially that conversions of digital data have constant relationships and a 'bit' is the smallest unit of data that can only be represented by a 0 or 1 [^5]. <br>
+
+##### MbMAX, MMAX, CACH
+Base measures: 
+
+- nano (n) = $10^{9}$
+- kilo (k) = $10^{3}$
+- mega (M) = $10^{6}$
+- Byte (B) = 8 Bits [^4] <br>
+
+Digital Data Conversions where kilbytes is indicated as the unit for memory associated columns:
+
+- 1 kB [^6] = 0.001 MB = 1024 Bytes = 8192 bits
+- 1 MB = 1,000 kB 
+- 1 ns = 0.000000001 s = $1\times10^{-9}$s
+
+##### PRP*, CHMIN, CHMAX, MYCT:
+
+- CPU [^1] = central processing unit
+- PRP is relative performance and target but : Computer performance[^2] is the amount of useful work accomplished by a computer system
+- CHMIN & CHMAX : Channels [^3] have their capacity as additive over independent channels
+- MYCT : Cycle Time [^4] is how long it takes to process a given job
+
+[^1]: [CPU Wikipedia Page](https://en.wikipedia.org/wiki/Central_processing_unit)
+[^2]: [computer performance Wikipedia Page](https://en.wikipedia.org/wiki/Computer_performance)
+[^3]: [Channel capacity Wikipedia Page](https://en.wikipedia.org/wiki/Channel_capacity)
+[^4]: [Bit and Byte](https://thisvsthat.io/bit-vs-byte)
+[^5]: [kilobyte vs bit](https://thisvsthat.io/bit-vs-kilobyte)
+[^6]: [conversion calculator](https://thisvsthat.io/bit-vs-kilobyte)
+
+## 3. Missing Values
+Even though `str()` indicated there were 2 Missing Values in 'CHMIN', we will iterate over columns using `which()`; borrowing approach from [Module 07.5](http://artificium.us/lessons/03.ml/l-3-440-primer-regression/l-3-440.html) by Professor Schedlbauer. However only the *numeric* strategy of `is.na( )` is needed as no string values are present in `df`.
+```{r 3_find_missing values}
+#initialize object as false for print 
+found <- F
+
+for(c in 1:ncol(df)){
+  missing.Values <- which(is.na(df[,c]))
+  num.Missing.Values <- length(missing.Values)
+  if(num.Missing.Values > 0){
+    print(paste0("Column '", names(df)[c], "' has ", num.Missing.Values, " missing values"))
+    found <- T
+  }
+}
+```
+With only 2 `NA` values in the entire data set and within the same column, it seems the values are 'Missing Completely at Random' and should be imputed. The method of feature average was discouraged, so I think the exploration of kNN, kNN regression, Model Regression Tree, Decision Tree, and Naive Bayes are the potential options for imputation.<br><br>
+
+kNN and Decision Tree are non-parametric, while Naive Bayes is reasonably parametric but has amplified combined predictive effect for categories. I explored all of these methods except the binned Decision Tree. I will mainly explain my choice with limited code on the rejected methods.<br>
+
+The features are integers, meaning they are numeric in value but they can be 'binned' into discrete categories easily.<br>
+
+#### Continuous Regression (not selected)
+
+I did attempt numeric *regression* where a continuous variable was returned by either *kNN Regression* or *Model Regression Tree* where various 'k' and 'cp' values were explored respectively. Overall, accuracy was roughly 50% where despite a high `cor( )` value of approximately 0.88; but there are many 'bins' and the numeric magnitude of the feature does have importance for impact on pairing with other features. Because of dense clustering of lower magnitude values the continuous variable return had large error/high variance even attempting to select the closest 'discrete category'. If scaling was not performed first , which is unusual for kNN, the predictions were basically the same as the scaled. <br><br>
+
+#### Discrete Classification (Naive Bayes Selected)
+
+Again, just scaling features to utilize the non-parametric methods of kNN or Decision Tree had a rough accuracy of 50% with low 'kappa'. Due to this and the relatively low correlation found before any transformations, it made the idea of transforming to a relatively normal distribution and utilizing the amplified prediction power of Naive Bayes for low impact features a better approach. After visual inspection of all model predictions and validation sets, Naive Bayes seemed the more accurate even if the 'accuracy' percents were similar. That has to do with the *naive* nature of the mode, but therefore the method ***I selected Naive Bayes Classification for imputation of missing values.***
+
+### 3. Imputation by Naive Bayes Classification
+
+Naive Bayes assumptions:
+
+- relatively normal distribution
+- independent variables (not necessarily true but currently low correlation)
+- equal importance of variables (so even small impact will contribute to classification)
+- works best for categorical data (so need to 're-categorize' after transformation)
+
+General handling for Data Models: <br><br>
+
+I will treat the numeric values as *ordinal features* with *ranked order* based on the *min-max* scaled value. <br><br>
+Since **PRP** is the overall goal and the relation is not defined, and overfitting should be avoided; *the column 'PRP' with be excluded for the model predictions for 'CHMIN'.* **The `NA` values (rows : `r paste0(which(is.na(df$CHMIN)), collapse = " , ")`** are the ultimate goal so they will also be removed from the training and testing sets.
+
+```{r 3_index_NA_remove_PRP}
+# data frames for missing value imputation
+targets <- which(is.na(df$CHMIN))
+# remove PRP for CHMIN imputation
+df.nb <- df[, -which(colnames(df) == 'PRP')]
+```
+
+### 3.1 Normalize the Data for Naive Bayes
+
+```{r 3_normalize_df}
+#initialize data frame for log_2 transformation
+df.log2 <- df.nb
+# log(1, base = 2) = 0
+for(col in 1:ncol(df.log2)) {
+  min_val <- min(df.nb[[col]], na.rm = TRUE)
+  if (min_val <= 0) {
+    shift <- abs(min_val) + 0.99
+    df.log2[[col]] <- log(df.nb[[col]] + shift, base = 2)
+  } else {
+    df.log2[[col]] <- log(df.nb[[col]], base = 2)
+  }
+}
+
+pairs.panels(df.log2)
+```
+
+### 3.2 Scale Up and Factor for Naive Bayes Categorical Use
+With the `log(base = 2)` transformation the data became normalized, however this is a very condensed range for all features with the target 'CHMIN' range [`r paste0(range(df.log2$CHMIN, digit = 2), collapse = " , ")`]. After much trial , error, and investigation into `factor( )`. I learned that factor will preserve "numeric" values as "integers". With the transformation there are multiple categories that would have the same integer value. So in order to maintain this transformation of normality but facilitate the need for distinct categories, I am scaling the values up by a factor of *100* for use in Naive Bayes Modeling.
+```{r 3.2_scale_and_factor}
+# transformations for use as factors
+df.nb <- as.data.frame(lapply(df.log2, round, digit = 3))
+df.nb.scale <- 100 * df.nb
+
+# categorical data.frame for nb.model
+df.nbf <- as.data.frame(lapply(df.nb.scale, as.factor))
+
+# maintains some shape when scaled
+pairs.panels(df.nb.scale)
+```
+
+### 3.3 Lookup Factor Values in Data Frame
+With the creation of data.frame copies to manipulated for each transformation of the data, a 1:1 index of values can be used for look up to impute predicted value. 
+```{r 3.3_lookup_df}
+# CHMIN target
+chminF <- data.frame(Label = df$CHMIN,
+                     Log2 = df.log2$CHMIN,
+                     Decimal = df.nb$CHMIN,
+                     Scaled = df.nb.scale$CHMIN,
+                     Factor = df.nbf$CHMIN)
+chminF2 <- as.data.frame(lapply(chminF, function(x){sort(unique(x))}))
+table.lookup <- knitr::kable(chminF2, caption = "'CHMIN' Look-up Key")
+```
+
+`r table.lookup`
+
+### 3.4 Test *Transformed and Scaled* Data's Normality to satisfy Naive Bayes Assumption
+```{r 3.3_nb_normality_test}
+#initialize list 
+norm.list.scale <- vector("list", length = ncol(df.nb.scale))
+
+for(c in 1:ncol(df.log2)){
+  norm.list.scale[[c]] <- temp <- shapiro.test(df.nb.scale[,c])
+  print(paste0("Column '", names(df.nb.scale)[c], "' has a W statistic = ", round(temp$statistic, 3), " and p-value = ", formatC(temp$p.value, digits = 3, format = 'fg')))
+}
+```
+
+Here we can see that the data after transformation is significantly closer to a normal distribution (maintained in scaled data) based on the Shapiro-Wilk's W statistic being very close to 1. While the p-value is below 0.05 to reject the null hypothesis of normal distribution this is significantly closer. So proceeding with Naive Bayes to impute the missing value is good. Also these methods will be used to transform. the multiple linear regression model. <br>
+
+I will note I spent way longer than I should have to realize the $x =2^{y}$ distribution and ended up testing gamma, exponential, natural log, and did so with caret and e107. I tried cross validations, Box-Cox (my backup), I did `sqrt()` into `log()` base e (my very first approach - so at least intuitively I was kinda there), PCA, and then realized log base 2. I finally realized the log should have base 2 because I remember Professor Schedlbauer's Lecture [The C5.0 Algorith,](https://vimeo.com/835739979) where he comments that *'in computer science we always use base two'*. But I got there eventually. <br>
+
+I chose the model approach of Naive Bayes based on data transformed by `sqrt()` and then natural `log()` (double transformation). But also I learned through much trial and error how `factor( )` works for the re categorization of the levels and labels, where integer values are what results so the same relative distribution is maintained for the label but the digits of precision is lost. Meaning the 'normality' is not quite as good but that's okay since Naive Bayes works best on categorical data and it only needs reasonably normal data.
+
+### 3.5 Split the Data for Naive Bayes Model Testing
+Intentionally left warning here, to highlight that some values aren't present in data sets.
+```{r 3.5_split_data}
+# reproducible results
+set.seed(16) 
+#remove NA targets
+df.nbf2 <- df.nbf[-targets,]
+
+#index for training and validation
+split.index <- createDataPartition(df.nbf2$CHMIN,
+                                   p = 0.8,
+                                   list = FALSE)
+
+# testing (t) and validation (v) sets
+nb.t <- df.nbf2[split.index,]
+nb.v <- df.nbf2[-split.index,]
+
+# labels for t & v sets
+factor.t <- df.nbf2[split.index, 'CHMIN']
+factor.v <- df.nbf2[-split.index, 'CHMIN']
+```
+
+### 3.6 Build Naive Bayes Model and Evaluate Accuracy
+```{r 3.6_nb_model}
+nb.model <- naiveBayes(CHMIN ~.,
+                       data = nb.t,
+                       laplace = 0.000001)
+
+nb.prediction <- predict(nb.model,
+                         newdata = nb.v[,-which(colnames(nb.v) == 'CHMIN')])
+
+#accuracy
+cM_nb.model <- confusionMatrix(nb.prediction, factor.v)
+cM_nb.model$overall['Accuracy']
+cM_nb.model$overall['Kappa']
+```
+This is actually a really decent model (especially considering all other models were returning an accuracy near 50% with a Kappa near 0.25 for most of my previous attempts). I will use this to predict the missing 'CHMIN' values and look up the prediction's corresponding labels to impute.
+
+### 3.5 Predict Missing 'CHMIN' Values
+```{r 3.5_predict_NA}
+# object previously saved df.targets
+#transform new data
+df.new <- df.nbf[targets,]
+
+pred.NA <- predict(nb.model,
+                   newdata = df.new)
+```
+
+## 4. Use Look-up of Prediction Values to Impute: 12 & 16
+```{r 4.impute_NA_predictions}
+# apply look up value to NA
+df[targets, 'CHMIN'] <- NA.labels <- chminF2[which(chminF2$Factor %in% pred.NA), 'Label']
+df[targets, ]
+```
+
+The Naive Bayes Model predicted the 'CHMIN' for the target observations: ***row =`r paste0(targets, collapse = " , ")` Imputed Value = `r paste0(NA.labels, collapse = " , ")`***. Looking at the observation values, the imputed values do make sense for the corresponding 'CHMAX' which we say a strong correlation between previously.
+
+## 5. Handling Outliers
+Again a majority of these values are actually categorical in nature where magnitude increases make sense. So Rather the values should be evaluated with that in mind and the columns described units of measure previously discussed. So normalization of the data should be done first, since outliers are evaluations of empirical distribution norms. Which is by a `log_2` transformation method identified previously. <br><br>
+
+Unlike the previous scaling though, '0.01' instead of '0.99' will be used for any zeros in the data set to avoid '-Inf' return but maintain 0 as a distinct value and not part of values transformed that were 1.
+
+### 5.1 Normalize all Data for Outlier Evaluation
+```{r 5.1_normalize_all_data}
+# df of All transformed data
+dfA.log2 <- df
+# log(1, base = 2) = 0
+for(col in 1:ncol(dfA.log2)) {
+  min_val <- min(df[[col]], na.rm = TRUE)
+  if (min_val <= 0) {
+    shift <- abs(min_val) + 0.01
+    dfA.log2[[col]] <- log(df[[col]] + shift, base = 2)
+  } else {
+    dfA.log2[[col]] <- log(df[[col]], base = 2)
+  }
+}
+
+pairs.panels(dfA.log2)
+```
+
+### 5.2 Identify Outliers by *z-Score*
+Borrow logic and printing from [Module 07.5](http://artificium.us/lessons/03.ml/l-3-440-primer-regression/l-3-440.html) by Professor Schedlbauer. 
+```{r 5.2_calc_zScore_id.outliers}
+#create z-score matrix of transformed values
+df.z <- as.data.frame(lapply(dfA.log2, scale))
+# loop print
+for (c in 1:ncol(df.z)) {
+  # outliers
+  outliers <- which(abs(df.z[,c]) > 3.0)
+  #print statements
+  if (length(outliers) > 0) {
+    ## found outliers; replace with NA and impute later
+    cat("Found ", length(outliers), " outliers in column '", names(df)[c], "': \n")
+    cat("   --> ", df[outliers,c], "\n")
+  }
+}
+```
+
+### 5.3 Treat Channel Outliers : no change
+
+Again this requires some domain knowledge, I am not 100% positive but I believe "0" channels is possible and therefore I will leave it alone. Due to some online searching and the Wikipedia quote : <br>
+  |"Much later, the channels were implemented as an on-board processor residing in the same box as the CPU,
+  |generally referred to as a "channel processor", and which was usually a RISC processor, but which could
+  |be a System/390 microprocessor with special microcode as in IBM's CMOS mainframes."[^3]
+
+### 5.4 'MMAX' outliers and 'MbMIN' correlation
+```{r 5.4_MMAX-out}
+# original data entry
+mmax.out <- which(abs(df.z$MMAX) > 3.0)
+df[mmax.out,]
+```
+
+```{r 5.4_MMAX-out_z}
+# corresponding z-Score values
+round(df.z[mmax.out,], 2)
+```
+
+My immediate reaction to the single 'MMAX' outlier was that the unit input was incorrect. I assumed that *64 MB* was used instead of *64000 kB*, especially considering other maximum 'MMAX' observations has the value ` r max(df$MMAX)` kiloBytes as a possibility. However upon identification of the outlier in row `r mmax.out` for the column 'MMAX', I found that same error in the column 'MMIN'; but the **z-score was `r df.z[mmax.out, 'MbMIN']`.**<br>
+
+The 'MMAX' outlier definitely appears to be an outlier, but 'MbMIN' makes me question the z-Score cut off for the Memory associated features.
+
+[^7]: [image of common memory storage capacities](https://www.easeus.com/images/en/wiki-news/types-of-usb-flash-drive.png)
+
+```{r}
+pairs.panels(dfA.log2[,c('MbMIN', 'MMAX')])
+```
+
+### 5.5 Manual Update to 'MMAX' Outlier to 64000
+```{r 5.5_mmax}
+df[mmax.out, 'MMAX'] <- as.integer(64000)
+df[mmax.out,]
+```
+
+I do believe the 'MMAX' is incorrect and will impute the value `r df[mmax.out, 'MMAX']` to reflect a MB to kB conversion by multiplying the outlier by 1000.
+
+### 5.6 'MbMIN' lower z-Score to 2.9
+I only changed the cut-off value for MbMIN, I did look at other column z-Score values but felt the other features were fine as is.
+```{r}
+mbmin.out <- which(abs(df.z$MbMIN) > 2.9)
+df[mbmin.out,]
+# replace as NA
+dfA.log2[mbmin.out, 'MbMIN'] <- NA
+```
+
+### 5.7 Calculated 'MbMIN' Value From 'MMAX'
+```{r 5.7_find_multiplier_mode}
+# integer vector of Multipliers
+multiplier <- as.integer(df[-mbmin.out, 'MMAX'] / df[-mbmin.out, 'MbMIN'])
+avg.mult <- mean(multiplier)
+# vector of unique multipliers
+mode.mult <- sort(unique(multiplier))
+# initialize the count vector for multipliers found
+count.mode <- vector(length = length(mode.mult))
+# tally counts
+for(i in 1:length(count.mode)){
+  count.mode[i] <- length(which(multiplier == mode.mult[i]))
+}
+# data.frame of counts to multiplier
+mode.df <- data.frame(count = count.mode, 
+                      multiplier = mode.mult)
+# find maximum count of multiplier used
+mode.index <- which(mode.df$count == max(mode.df$count))
+mode.found <- mode.df[mode.index,'multiplier']
+mode.found
+```
+
+#### Use Mode of Multiplicative Factor between 'MbMIN' & 'MMAX' = 4
+
+Because of the strong correlation between the channel columns and the multiplicative/scaled relationship I felt was present, I decided to find the mode of the multiplier in the data and use that to calculate the corresponding 'MbMIN' values. I did investigate how many columns had equal Memory min and max but it was very infrequent so I felt confident in this approach.
+
+After looking at the data, it appears that 'MbMIN' and 'MMAX' have a scaled relationship. I divided all other 'MMAX' by 'MbMIN' with result coerced to integer. Found the resultant mode multiplier. Then divided the outlier's corresponding 'MMAX' by that multiplier to impute for the outlier in 'MbMIN'
+
+### 5.8 Impute MbMIN Value = 16000
+```{r 5.8_impute_MbMIN_calc}
+df[mbmin.out, 'MbMIN'] <- df[mbmin.out, 'MMAX']/mode.found
+df[mbmin.out,]
+```
+
+After evaluating the 'MbMIN' column I did not have confidence to exclude *96* as an outlier by using a '2.5' z-Score, so I only lowered the z-Score to '2.9'. Most observations do not have the 'MbMIN' == 'MMAX', by they do appear to be a factor relation, and the `pairs.panel( )` supports a strong correlation.<br>
+
+Therefore, I think treating the outlier for row `r mbmin.out` in 'MbMIN' should be treated as a missing value to impute. <br>
+
+*Multiplicative Mode found = `r mode.found` with a count of `r max(mode.df$count)`, used to calculate 'MbMIN' imputed value **`r df[mbmin.out, 'MMAX']/mode.found`*** 
+
+## 6. Normalize `df` with $\log_2$ for Regression
+Normalization wil be by $\log_2$ as previously stated for the previously imputed values. But I will use **shift = '0.50'** instead of '0.01' or '0.99', because it results in "-1" which is the same different in value as $\log_2{1} \text{ and } \log_2{2}$. This is because the 'CACH', 'CHMIN', and 'CHMAX' all have '0' values that I confirmed as valid possibilities for those categories and since $\log_2(0) = \neg Inf $ I felt a shift was necessary.
+```{r 6_normalize_df}
+df.norm <- df
+# log(1, base = 2) = 0
+for(col in 1:ncol(df.norm)) {
+  min_val <- min(df.norm[[col]], na.rm = TRUE)
+  if (min_val <= 0) {
+    shift <- abs(min_val) + 0.5
+    df.norm[[col]] <- log(df[[col]] + shift, base = 2)
+  } else {
+    df.norm[[col]] <- log(df[[col]], base = 2)
+  }
+}
+
+pairs.panels(df.norm)
+```
+
+### 6.1 Confirm Normality again with Shapiro-Wilks Test
+```{r 6.1_nb_normality_test}
+#initialize list 
+norm.list.scale <- vector("list", length = ncol(df.norm))
+
+for(c in 1:ncol(df.log2)){
+  norm.list.scale[[c]] <- temp <- shapiro.test(df.norm[,c])
+  print(paste0("Column '", names(df.nb.scale)[c], "' has a W statistic = ", round(temp$statistic, 3), " and p-value = ", formatC(temp$p.value, digits = 3, format = 'fg')))
+}
+```
+
+## 7. Correlation Matrix
+There have been multiple `pairs.panels( )` used so I will utilize `cor( )` for a fully filled Correlation Matrix.
+```{r 7_cor_matrix}
+knitr::kable(round(cor(df.norm), 3), caption = "Transformed Data Correlation Matrix")
+```
+
+Like previously stated there is a very strong correlation for multiple features. Based on the correlation Matrix, I would say all values that at 0.70 and above have a strong correlation.
+
+### Multicollinearities between Predictor Features
+
+1. CHMIN to CHMAX 
+2. MbMIN to MMAX
+3. MYCT to MbMIN
+
+### Features with a strong Correlation to PRP target:
+
+1. MYCT (negative)
+2. MbMIN 
+3. MMAX
+4. CACH
+
+It makes since for *min* and *max* of the same feature to have a strong correlation because directly impact what value the other one can have(i.e. minimum can't exceed the maximum). Just like the relationship between cycle time and available memory makes sense <br>
+
+I personally believe removing the minimum values would make the most sense to avoid multimillionaires in the data, since the *maximum* Channels or Memory possible would limit the CPU's overall performance as a *ceiling threshold* basically the computer is unable to exceed a certain level of performance. <br>
+
+I would choose to explore multiple iteration where I'd starting with removing 'MbMIN' and 'CHMIN' but with the use of all features into step-wise backward regression by p-value and `step()` for AIC you will see that those are actually both left in the model, but the resultant model has multicollinearity as a result (which is bad because it leads to overfitting).
+
+## 8. Training (85%) and Validation (15%)
+```{r split_data}
+# because of rounding , use 0.84 for split
+split.index <- createDataPartition(df.norm$PRP,
+                                   p = 0.84,
+                                   list = FALSE)
+reg.t <- df.norm[split.index, ]
+reg.v <- df.norm[-split.index, ]
+```
+
+## 9. Multiple Linear Regressions
+
+### 9.1 All Features
+```{r 9.1_all_feat_lm_fit1}
+# train model
+reg.fit1 <- lm(PRP ~ MYCT + MbMIN + MMAX + CACH + CHMIN + CHMAX,
+                data = reg.t)
+summary(reg.fit1)
+```
+
+### 9.2 Stepwise Backward-Elimination
+#### 9.2.1 Remove MYCT
+```{r 9.2_stepwise_reg_fit2}
+reg.fit2 <- lm(formula = PRP ~ MbMIN + MMAX + CACH + CHMIN + CHMAX, 
+               data = reg.t)
+summary(reg.fit2)
+```
+
+#### 9.2.2 Remove CHMAX
+```{r 9.2_stepwise_reg_fit3}
+reg.fit3 <- lm(formula = PRP ~ MbMIN + MMAX + CACH + CHMIN, 
+    data = reg.t)
+summary(reg.fit3)
+```
+
+#### 9.3 Resultant Multiple Linear Regression Model
+`lm(formula = PRP ~ MbMIN + MMAX + CACH + CHMIN, data = reg.t)`
+```{r 9.3_extract_coefficients_define_function}
+r.m <- summary(reg.fit3)
+b0 <- r.m$coefficients[[1]] # intercept
+b1 <- r.m$coefficients[[2]] # MbMIN 
+b2 <- r.m$coefficients[[3]] # MMAX
+b3 <- r.m$coefficients[[4]] # CACH
+b4 <- r.m$coefficients[[5]] # CHMIN
+
+plugin <- function(df){
+  predictions <- vector(length= nrow(df))
+  for(r in 1:nrow(df)){
+    b1_plug <- df[r, which(colnames(df) == 'MbMIN')]
+    b2_plug <- df[r, which(colnames(df) == 'MMAX')]
+    b3_plug <- df[r, which(colnames(df) == 'CACH')]
+    b4_plug <- df[r, which(colnames(df) == 'CHMIN')]
+    predictions[r] <- b0 + (b1 * b1_plug) + (b2 * b2_plug) + (b3 * b3_plug) + (b4 * b4_plug)
+  }
+  predictions
+}
+```
+
+$$ PRP = (0.234 \times \text{MbMIN})  + (0.437 \times \text{MMAX}) + (0.072 \times \text{CACH})+ (0.111 \times \text{CHMIN}) - 2.530 $$
+Where: <br>
+    $\beta_1$ = `r b1` <br>
+    $\beta_2$ = `r b2` <br>
+    $\beta_3$ = `r b3` <br>
+    $\beta_4$ = `r b4` <br>
+    $\beta_0$ = `r b0` <br>
+
+## 10. Evaluate Model Performance
+
+Funnily enough, the resultant model is the complete opposite of what my initial impression was for *feature selection.*  But all features have a p value less that 0.05 and considered significant contributors to the model. <br><br>
+
+$R^{2}$ = `r r.m$r.squared` <br>
+$\text{Adjusted}\;R^{2}$ = `r r.m$adj.r.squared` <br><br>
+
+Indicating that the model does a reasonably good job at representing the data set, with `r round(r.m$adj.r.squared, 3)*100`% variance in the data set explained by the Multiple Linear Regression Model.
+
+### 10.2 MSE and RMSE of Validation Set
+```{r MSE_RMSE_val}
+# validation predictions
+fit3_prediction <- predict(reg.fit3,
+                           newdata = reg.v[,-which(colnames(df.norm) == 'PRP')])
+
+mse.fit3 <- mean((reg.v$PRP - fit3_prediction)^2)
+rmse.fit3 <- sqrt(mse.fit3)
+```
+
+The rounded error measure for the Multiple Linear Regression :
+
+**mean squared error** = `r round(mse.fit3, 3)` <br>
+**Root Mean Squared Error** = `r round(rmse.fit3, 3)` <br>
+
+These are extremely good measures because they are near 0. But again Likely due to the overfitting by having MbMIN and MMAX in the model.
+
+### 10.1 Model Residual Distribution
+Plotting the residuals can also serve as good way to evaluate the performance of a linear model.
+
+#### 10.1.1 Histogram of Model Residuals
+```{r residual_histogram}
+hist(resid(reg.fit3), main = "Histogram of Residuals", col = "lightblue")
+```
+
+#### 10.1.2 Q-Q Plot of Model Residuals
+```{r residual_Q-Q}
+qqnorm(resid(reg.fit3))
+qqline(resid(reg.fit3), col = "red")
+```
+
+### 10.2 Lowest AIC Model
+To evaluate the AIC in addition to MSE, I used `step()` which results in a Multiple Linear Regression with even more multicollinearity.
+`lm(formula = PRP ~ MbMIN + MMAX + CACH + CHMIN + CHMAX, data = reg.t)`
+```{r AIC_step_funtion}
+step(reg.fit1)
+```
+
+## 11. New Data Point:
+```{r 11_new_data_predict}
+df.new.data <- data.frame(MYCT = 180,
+                       MbMIN = 262, 
+                       MMAX = 4000,
+                       CACH = 0.50, # avoid log_2 of 0 = -Inf
+                       CHMIN = 1,
+                       CHMAX = 3)
+# transform
+new.dl2 <- as.data.frame(lapply(df.new.data, log, base = 2))
+
+# prediction/CI of transformed data.point
+new.conf <- predict(reg.fit3, 
+                    newdata = new.dl2, 
+                    interval = 'confidence')
+# undo transformation
+new.conf2 <- sapply(new.conf, function(x){2^x})
+
+# plugin method double check
+plugin(new.dl2)
+```
+
+However this was the $y = \log_2{x}$ transformation; in order to get the same unit value  as the original data frame and new data point a reverse transformation needs to take place using $x = 2^{y}$<br>
+
+### Prediction and Confidence Interval
+The Model's Output Prediction in *Transformed Value*: <br>
+Mean Value : `r round(new.conf[1], 2)` <br>
+With 95% Confidence Internal that the average value of PRP will fall between : [`r round(new.conf[2], 2)`, `r round(new.conf[3], 2)`] <br>
+
+Untransformed : `r new.conf2`
+
+**The Model's Output Prediction with Confidence Interval in Comparable Units (coerce to integer) is: <br>
+Mean Value : `r as.integer(new.conf2[1], 2)` <br>
+With 95% Confidence Internal that the average value  of PRP will fall between : [`r as.integer(new.conf2[2], 2)`, `r as.integer(new.conf2[3], 2)`]** <br><br>
+
+## 12. Prediction Interval
+```{r 12_predict_interval}
+# prediction interval
+new.pred <- predict(reg.fit3, 
+                    newdata = new.dl2, 
+                    interval = 'predict')
+# undo transformation for correct value
+new.pred2 <- sapply(new.pred, function(x){2^x})
+```
+
+### Prediction and Prediction Interval
+The Model's Prediction Interval in *Transformed Value* is: <br>
+Mean Value : `r round(new.pred[1], 2)` <br>
+With 95% Prediction Internal that the actual value for PRP will fall between : [`r round(new.pred[2], 2)`, `r round(new.pred[3], 2)`] <br>
+Untransformed : `r new.pred2`
+
+**The Model's Output Prediction with Prediction Interval in Comparable Units (coerce to integer) is: <br>
+Mean Value : `r as.integer(new.pred2[1], 2)` <br>
+With 95% Prediction Internal that the actual value for PRP will fall between : [`r as.integer(new.pred2[2], 2)`, `r as.integer(new.pred2[3], 2)`]**
+
+## Conclusion:
+I used all features to start due to the Canvas Assignment instructions, but in real-world practice, I would not due to the high multicollinearity previously identified that subsequently got built into the final model by step-wise backward elimination and minimum AIC, so while these graphs and numbers look great; they indicate overfitting to the data set and would likely do poorly for other data. While the digital relationship of conversion is constant there are some questions on the low end value input accuracy and the amplified impact of some features on the target 'PRP'.

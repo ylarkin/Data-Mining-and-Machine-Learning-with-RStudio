@@ -1,0 +1,600 @@
+---
+title: "Practicum I"
+author: "Larkin, Yvonne"
+date: "Fall 2025"
+output:
+  html_document:
+    df_print: paged
+subtitle: "DA5030 / kNN Classification"
+
+---
+## Part A : Configure Workflow
+Create this R Project to wrangle and analyze the Diabetes data to produce a knit RMarkdown Report HTML file. <br>
+Formatting approaches for the RNotebook's knit markdown file reference [R Markdown Cookbook](https://bookdown.org/yihui/rmarkdown-cookbook/"), [Visual R Markdown by RStudio]("https://rstudio.github.io/visual-markdown-editing/"), and [rmarkdown::cheat sheet]("https://posit.co/wp-content/uploads/2022/10/rmarkdown-1.pdf") throughout. I will try to make notes when specifically applicable, especially when it is a *new to me* concept and application and not a "common knowledge" for the class approach from Module 01.
+
+```{r partA_install_packages}
+library(class) # knn()
+library(knitr) # markdown formatting and code chunk options
+library(kableExtra) # tables
+library(gmodels) # CrossTable()
+```
+
+## Part B : Load Data from URL
+Load [diabetes-salted-09-03-25-ProfS.csv]("http://s3.us-east-2.amazonaws.com/artificium.us/datasets/diabetes-salted-09-03-25-ProfS.csv") to a data frame named `df.diabetes` from the link's URL.
+
+Upon visual inspection of the linked .csv file contains headers, comma delimited items, and what appears to be all numeric entries. Therefore, using `read.csv()` with argument parameter `header = TRUE` is necessary. While there only appear to be numeric entries of a *continuous* nature, I will still set `stringsAsFactors = FALSE` for good practice to prevent unwanted coercion.
+
+```{r partB_load_data}
+# save link to object
+url <- "http://s3.us-east-2.amazonaws.com/artificium.us/datasets/diabetes-salted-09-03-25-ProfS.csv"
+
+# load raw data to data frame named df.diabetes
+# df copy of original data for markdown report
+df.diabetes <- df <- read.csv(file = url,
+                              header = TRUE,
+                              stringsAsFactors = FALSE)
+```
+
+## Part C : Explore Data
+```{r partC_basic_data_eval, eval=FALSE}
+# manual exploration; eval = F for knit
+str(df.diabetes) # no object assignment possible
+summary(df.diabetes)
+```
+
+  Initial data frame evaluation shows, that there are `r ncol(df.diabetes)` features (or columns) with `r nrow(df.diabetes)` observations (or rows) in the `df.diabetes` that was created from the .csv file. Using `str()` (in the console) I can see that there all 9 features are of the data `class` (or type) `numeric`, but 7 features are specifically `integer` values while 2 say "num" equating to `double` here. This is definitely an important note to keep in mind for future data wrangling. I want to maintain the original `class` type for the features as it applies to any alteration of data points. I do not want to cause a forced coercion by inserting a `double` where an `integer` should be because not only does it change the entire feature's `class`, but it will change how a value is displayed. Specifically, I mean the difference between a value being *displayed by* the "whole number" while ignoring any decimal value after it **versus** being *rounded to* the nearest "whole number" (e.g. 10.6 as an integer is displayed as 10 but a rounded double would be 11). 
+<br><br>
+  From the column names, values, and Practicum prompt I know that the last column `df.diabetes$Outcome` is the indicator coloumn, aka the dependent variable, that will be "predicted" by a kNN model trained by the other 8 predictor features, aka the independent variables.
+<br><br>
+  Using `summary()`, it can be assessed that no negative values are present in the data set, otherwise meaning the minimum value observed is $\geq 0$ . All features except `df.diabetes$DiabetesPedigreeFunction` and `df.diabetes$Age` having a minimum value $= 0$. Based on the column names and the fact that these are metrics of measure humans it makes sense for 0 to be the minimum value observed. The data does relate to **Diabetes** specifically so values outside of the "normal range" for some features is expected. I did extra background research on specific features to help with my outlier assessment and approach in Part D (they will be referenced accordingly along with other `summary()` extrapolations). 
+
+```{r partC_visualization_plots, eval = FALSE}
+# eval = F for knit
+# scatter plot of raw data points to assess distribution and potential outliers
+sapply(names(df.diabetes), function(x) {
+  plot(df.diabetes[[x]], main = x)
+  })
+```
+
+```{r partC_shapiro_wilks_normality_eval}
+# perform normality test and extract p and W values
+shapiro_featx <- lapply(colnames(df.diabetes), function(x) {
+  shapiro.test(df.diabetes[,x])
+})
+p.value_featx <- sapply(1:length(shapiro_featx), function(x){
+  shapiro_featx[[x]]$p.value
+})
+w.stat_featx <- sapply(1:length(shapiro_featx), function(x){
+  shapiro_featx[[x]]$statistic
+})
+# create dataframe for print/index
+df.shapiro <- data.frame(Feature = colnames(df.diabetes),
+                         p.value = p.value_featx,
+                         W.statistic = w.stat_featx)
+```
+
+```{r shapiro_wilks_normality_dfCration, warning=FALSE}
+# table format for markdown
+table.display <- kable(df.shapiro, align = c('l','c','r'), caption = "Shapiro-Wilks Normality Test for df.diabetes Features") %>%
+  kable_styling(full_width = T, bootstrap_options = 'striped')
+```
+
+In general, the scatterplot of raw data for each feature does show that the data is generally clustered around a a middle value and each have 1+ noticeable outliers present. Where `df.diabetes$Glucose` appears to have an *extreme values* outlier, while the others have outliers that are not that far from other data points. Part D will evaluate presence of missing values, identify outliers, handle both before standardization of data scale with the intention of training a ***'k Nearest Neighbors'*** model to predict encoded feature "Outcome" i.e. Diabetes Diagnosis. 
+<br><br>
+While kNN does not require a normal distribution to work, it can be helpful in assessing how to approach the data for normalization scaling. In the table below [^1] , all features were assessed by the Shapiro-Wilks Test for normality, where the null hypothesis states "the data is normally distributed". With all "p.values" < 0.05 it indicates we would reject the null hypothesis even though a majority of "W" statistic values are > 0.7, i.e. close to 1, which would suggest there is a strong likelihood the data sets are normally distributed. Overall this, with the understanding that it is data concerning *natural occcurences* would suggest the data should follow a Gaussian distribution but perhaps the outliers or diabetic individuals are the ones causing a "p.value" that rejects the null hypothesis of normal distribution. It would be good to retest after missing values and outliers are handled. <br>
+
+`r table.display` 
+
+[^1]: RStudio 'Help' Tab used for formatting : '? format' clicked on multiple of the links within that page, eventually making it to 'formatC' where I didn't really understand what the meanings were at first, but I continued trial and error for the arguments 'format = , digits = ' where R pop-ups told me options for format = argument were 'f', 'g', 'e', 'fg'. 
+
+## Part D : Shape Data for kNN
+
+Practicum I instructions indicated to normalize the data uzing the same method for all features but to do so *separately*. After some extra clarification, I landed on Separate **Feature Sections** after bulk handling to explore/handle Features in code chunks after bulk searches/ conversion. These same sections are maintained for reasoning and explanation of code choices and approach. This is the result of multiple reworks and exploration of the data, where many code lines and chunks were repeatedly reduced to eliminate redundancy, improve markdown recall of variables, and hopefully improve clarity on code logic.
+
+### Data Approach & Method
+
+#### Bolded Methods indicate Applicable Meanings and Chosen Approach for this Practicum
+1. **Handle Missing Values** <br><br>
+Look for `NA` elements within features. The *categorization* and *volume* of missing values determine if removal or imputation are the appropriate method of approach. 
+Three Main Categorization Types : 
+  - **(MCAR)** Missing Completely at Random
+  - (MAR) Missing at Random
+  - (MNAR) Missing Not at Random.
+Volume of missing values encompasses the number of `NA`s but also their distribution as it relates to individual observations (row) or features (col). Depending on the volume of missing data points there are 2 general methods of handling missing values: 
+  - Deletion : The removal at a case-level (row) *or* features-level (col) if there is a high number of `NA` as it relates to a particular dimension. 
+  - **Imputation** : Substituting a chosen value for the missing data point. This is typically done for lower frequencies of `NA` depending on the data overall. Methods include : calculating the mean, median, or mode; deciding on a default value (usually in relation to domain knowledge); or using advanced techniques like kNN modeling to select a value. <br><br>
+2. **Handle Outlier Values** <br><br>
+Identify any outliers within a *feature* (col). The **common cut-off value of 3.0 is used to define outliers.** Typically 99.7% of data should fall within 3.0 standard deviations, assuming the data is normally distributed. [^2] Depending on the outlier value, it can be left within the data set, imputed based on relative domain knowledge/data quality control for errors, or treated as a missing value (refer back to #1). But 2 methods of identifying outliers are :
+  - standard deviation : calculate `sd('feature')` and `mean('feature')` to determine an upper and lower bound for a data point to be within, where raw data point values are used.
+  - **z-Score** value : utilize an equation that centers the data set around a mean = 0 and sets the sd = 1.0; creating a 'normal distribution', where each data point is assigned a z-score value. (equation in #3) <br><br>
+3. **Normalize Feature Data** <br><br>
+If features do not fall within the same *scale,* one feature could drastically out-weight another in the kNN model due to the distance component in assessing how far away a *neighbor* is from the current data point being evaluated. Because of this it is important to standardize the data to be on the same scale. There are multiple approaches but the two most common, and permissible for the Practicum, are:
+  - **z-Score Standardization** : scales the data to center around *0*, where sd is set to *1*, because of this it is best used for data that mostly follows a Gaussian (Normal) distribution. The range of values includes both negative and positive values; where typically a majority of data is within [-3.0,3.0] if it is normally distributed. [^3]
+  - Min-Max Normalization. : scales the data to have a [0,1] range, domain-knowledge of minimum or maximum values possible can help circumvent re-scaling should the data set expand outside the original min-max model, but similarly to z-Score it will assign a value between 0.0 and 1.0 to represent the data point (instead of using the raw value). $$ \text{z-Score Standardization:} = \frac{x[i] - mean(x)}{sd(x)}$$ <br><br> $$ \text{min-max normalization} = \frac{x[i]\:-\:mean(x)}{max(x)\:-\: min(x)} $$
+4. **Encode Categorical Features** <br><br>
+Two main classification types of categorical features : <br>
+**Ordinal Features** : have a specific rank or order that is relevant to their assessment. Methods to encode Ordinal Categories include :
+  - **Label Encoding** 
+  - Boolean Encoding <br><br>
+Nominal Features : have no particular order. Methods to encode Nominal Categories include :
+  - One-Hot Encoding
+  - Count and Frequency Encoding
+  - Weight-of-Evidence Encoding <br><br>
+5. **Split the Data into Training and Validation Sets**
+  - Keep *Class Proportion* in mind (i.e. Outcome Ranking 0 vs 1)
+  - need corresponding *Label* Vectors to assess model accuracy later
+<br><br> (steps 6 through 9 in Part E)
+
+[^2]: Empirical Value for 99.7% of data to be within 3 sd : http://artificium.us/lessons/03.ml/l-3-203-outliers/l-3-203.html
+[^3]: z-Score Standardization : http://artificium.us/lessons/03.ml/l-3-206-feature-normalization/l-3-206.html
+
+### 1. Missing Values 
+```{r partD_1_all_NA}
+# find missing values by feature
+missing_featx <- lapply(colnames(df.diabetes), function(x){
+  which(is.na(df.diabetes[,x]))
+})
+```
+
+```{r partD_1_make print table}
+# index list number/position of not empty integer vector
+missing_col <- which(missing_featx != 0)
+
+# feature name with NAs
+missing_col.name <- colnames(df.diabetes)[missing_col]
+# number of NAs
+number_col.NA <- length(missing_featx[[missing_col]])
+# index missing value; only one so no need to loop etc
+missing_col.index <- unlist(missing_featx[[missing_col]])
+```
+
+```{r partD_1_glucoseNA}
+# visually know only Glucose has missing value from the df.missing 
+# impute a 0.5% trimmed mean on either end; chosen for the ~7 estimated outliers on scatter plot, general Gaussian assumption for human development
+df.diabetes$Glucose[missing_col.index] <- impute_gluc <- as.integer(mean(df.diabetes$Glucose, na.rm = TRUE, trim = 0.005))
+
+# markdown table display
+median_gluc <- sort(df.diabetes$Glucose)
+```
+
+#### 1.2 `r missing_col.name` Missing Value Imputed with 1% Trimmed Mean = `r impute_gluc`
+
+**The feature `r missing_col.name` has `r number_col.NA` `NA` value at row index `r missing_col.index`** 
+<br><br>
+From Parts B and C, the scatter plot and summary table indicate that `r missing_col.name` has at least one extreme outlier present with the value `r max(df.diabetes$Glucose)`. Additionally, there seem to be 6 other data points (not assuming overlap) that are outside of clustered data points at 0.if they are assumed as outliers that would account for `r round((7/nrow(df))*100, 2)`% of the data. This is fairly consistent with the Gaussian assumption that 99.7% of data should *not* be outliers, and so a mean with 0.5% trimmed off either end seems an appropriate imputation value.
+<br><br>
+Reasons I did not use `Mode` and `Median`:<br>
+Mode is an appropriate choice for categorical values where a limited number of distinct values are possible and not a continuous range that has the possibility of `r nrow(df)` distinct values (number of observations in data set).<br>
+Median could served to be an appropriate measure too, considering the 1 extreme outlier, but with one extreme outlier on the high end and 6 unclear low end values I was worried that "middle" value might be shifted towards 0 and too low. But the median value of  `r median_gluc[(nrow(df)/2)]` is still close to the **1% Trimmed Mean = `r impute_gluc` integer value that was imputed for `NA`.** 
+
+### 2. Handle Outliers
+```{r partD_create_df.numeric_zScores}
+# remove indicator "Outcome" so only numeric predictor features [1:8]
+df.numeric <- df.diabetes[,-which(colnames(df.diabetes) == "Outcome")]
+
+# reassign z-Score calculations to predictor data frame
+for(i in 1:ncol(df.numeric)){
+  df.numeric[,i] <- (df.diabetes[,i] - mean(df.diabetes[,i])) / sd(df.diabetes[,i])
+}
+```
+
+```{r partD_define_new_df.outlier, results='hide'}
+# create data frame for outlier related information (expanded multiple times)
+# separate chunks for clarity and testing
+
+# makes row names = col names so transposed but 1:1 indexing values
+df.outlier <- data.frame(Feature = character(length = ncol(df.numeric)),
+                         Num.outliers = numeric(length = ncol(df.numeric)),
+                         Statement = character(length = ncol(df.numeric)),
+                         # z-Score related index and value
+                         list.z.Index = I(vector("list", length = ncol(df.numeric))),
+                         list.z.Outliers = I(vector("list", length = ncol(df.numeric))),
+                         Outlier.Avg_z = numeric(length = ncol(df.numeric)),
+                         AbsFeat.Avg_z = numeric(length = ncol(df.numeric)),
+                         zRange.wo = I(vector("list", length = ncol(df.numeric))),
+                         # actual data point related stats
+                         list.outlier.dataVal = I(vector("list", length = ncol(df.numeric))),
+                         list.unique.out.dataVal = I(vector("list", length = ncol(df.numeric))),
+                         min.out.val = numeric(length = ncol(df.numeric)),
+                         max.out.val = numeric(length = ncol(df.numeric)),
+                         rawRange.wo = I(vector("list", length = ncol(df.numeric))),
+                         unQ.val = I(vector("list", length = ncol(df.numeric))))
+```
+
+```{r partD_generate_Outlier_Related_Stats}
+# loop data by feature again everything 1:1 for feature index number (tested in section with breaks at skipped line)
+# Calculate and Add Data to df.outlier for RMarkdown Use and Reduce redundant code for all 8 features
+for(i in 1:ncol(df.numeric)) {
+  # Feature
+  xfeat <- colnames(df.numeric)[i]
+  # index position for outliers by z-score in df.numeric
+  x.index <- which(abs(df.numeric[,i]) > 3.0)
+  # z.outlier z-score for outliers in df.numeric
+  x.zScore <- df.numeric[x.index, i]
+  # raw-Data value of outliers in df.diabetes
+  x.RawData <- df.diabetes[x.index, i]
+  # unique values
+  x.UnQ.val <- sort(unique(x.RawData))
+  # feature raw data range WITHOUT outliers present
+  x.wo.RawRange <- range(df.diabetes[-x.index, i])
+  # feature z-score range WITHOUT outliers present
+  x.wo.zRange <- range(df.numeric[-x.index, i])
+
+  # statement for table display
+  if(length(x.index) == 0){
+    statement <- paste0("No Outliers are in the feature '", xfeat, "'.")
+    } else if (length(x.index) == 1) {
+      statement <- paste0("1 Outlier Value is in the feature '", xfeat, "'.")
+      } else {
+        statement <- paste(length(x.index), " Outlier Values are in the feature '", xfeat,"'.")
+      }
+
+  # append all calculations for columns defined in df.outlier
+  # Feature Basics
+  df.outlier$Feature[i] <- xfeat
+  df.outlier$Num.outliers[i] <- length(x.index)
+  df.outlier$Statement[i] <- statement
+
+  # z-Score Related
+  df.outlier$Outlier.Avg_z[i] <- round(mean(x.zScore), digits = 2)
+  df.outlier$AbsFeat.Avg_z[i] <- round(mean(abs(df.numeric[,i])), digits = 2)
+  df.outlier$list.z.Index[i] <- I(list(x.index)) 
+  df.outlier$list.z.Outliers[i] <- I(list(x.zScore))
+  df.outlier$zRange.wo[i] = I(list(x.wo.zRange))
+
+  # actual data point related stats
+  df.outlier$list.outlier.dataVal[i] = I(list(x.RawData))
+  df.outlier$list.unique.out.dataVal[i] = I(list(x.UnQ.val))
+  df.outlier$rawRange.wo[i] = I(list(x.wo.RawRange))
+  df.outlier$unQ.val[i] = I(list(x.UnQ.val))
+}
+```
+
+```{r partD_2.predictorFeatures_Outlier_Markdown_variables}
+# markdown variables
+geq.73index <- which(df.outlier$AbsFeat.Avg_z >= 0.73)
+less.73feat <- df.outlier[-geq.73index,"Feature"]
+ext.outlier <- which(df.outlier$Outlier.Avg_z == max(df.outlier$Outlier.Avg_z))
+most.outliers <- which(df.outlier$Num.outliers == max(df.outlier$Num.outliers))
+
+# markdown outlier table
+OutlierTable <- kable(df.outlier[,c("Statement", "AbsFeat.Avg_z", "Outlier.Avg_z")], caption = "Outlier Assessment for All Numeric Features, also all considered predictor features.")
+```
+
+`r OutlierTable`
+
+The **predictor features** are all numeric values and their z-scores were assigned in a 1:1 index from `df.diabetes` to the newly created `df.numeric`. The indicator feature "Outcome" is excluded from this section as it is the target prediction of the kNN model and therefore a categorical feature to be handled in the *encoding* section. Outliers occur for various reasons; such as a medically viable but abnormal or even extreme case of some condition/test, clerical error, or even a default value intended as a *missing value placeholder*. 
+<br><br> 
+The common cutoff value for outlier data points is ***3.0 standard deviations*** away from the mean, otherwise evaluated using the same cut-off for the absolute value of the data point's **z-Score**. In the table above, you can see that ***`r length(geq.73index)` of the features have an average absolute z-Score $\geq 0.73$***. Upon inspection, the `r ncol(less.73feat)` features with lower absolute average z-Scores , `r less.73feat[1]` and `r less.73feat[2]`, have the *most severity*  and *highest number* of outliers. This suggest that these outliers play a large roll in shifting the absolute z-score average lower (as compared to the other features' collective average of `r round(mean(df.outlier$AbsFeat.Avg_z[geq.73index]), 2)`). But it seems reasonable to assume this also affects the feature's overall distribution testing in the previous Shapiro-Wilks Test table: `r df.shapiro$Feature[2]` has the lowest "W" statistic at `r round(df.shapiro$W.statistic[2], 2)` that make *normal distribution* assumption questionable.
+<br><br>
+`r df.outlier$Feature[ext.outlier]` has `r df.outlier$Num.outliers[ext.outlier]` extreme outlier with a z-Score of `r df.outlier$Outlier.Avg_z[ext.outlier]`. While `r df.outlier$Feature[most.outliers]` has the highest number of outliers at `r df.outlier$Num.outliers[most.outliers]`. 
+
+```{r partD_2.1_Pregnancies_outliers}
+# NO CHANGES Pregnancies = index position 1
+# z-Score values as range
+p.out_zRange <- unlist(df.outlier$list.z.Outliers[1])
+# markdown print
+print.pRange <- paste(p.out_zRange, collapse = ", ")
+```
+#### 2.1 `r colnames(df.diabetes)[1]`
+While double digit pregnancies are not the *social norm* today; it is not an unheard of number of pregnancies, it is not an impossibility, and the term pregnancy does not equate to a full-term delivery. The pregnancy outliers have a z-Scores range [`r print.pRange`]. Because of this, non-of the values seem to qualify as "extreme values." Meaning the measure of kNN distance would not be significantly impacted model function. Therefore, the "Pregnancies Outliers" will not be adjusted and remain in the data set. <br>
+
+```{r partD_2.2_Glucose_outliers}
+# assume clerical error, shift decimal left by multiplying outlier value by 0.1 (10%)
+# outlier index
+gluc_out <- unlist(df.outlier$list.z.Index[2])
+# range of values without the outlier in glucose
+gluc_range_wo <- paste(range(df.diabetes$Glucose[-gluc_out]), collapse = ", ")
+# adjusted integer value
+df.diabetes$Glucose[gluc_out] <- sub_gluc <- as.integer(df.diabetes$Glucose[gluc_out]* 0.1)
+```
+#### 2.2 `r colnames(df.diabetes)[2]`
+There is only `r df.outlier$Num.outliers[2]` `r df.outlier$Feature[2]` outlier with the value `r unlist(df.outlier$list.outlier.dataVal[2])`. This is likely an error in data entry with the the decimal point shifted right on accident, given the range of values without this outlier present is [`r gluc_range_wo`]. Because all Glucose levels are rounded to the ones place, I believe imputing the integer value where the outlier decimal place is moved to the left would be the most appropriate (i.e `r sub_gluc`).
+
+```{r partD_2.3_BloodPressure_outliers}
+# 35 outliers, all = 0 which is impossible; assume placeholder value treat as missing value
+BP_out <- unlist(df.outlier$list.z.Index[3])
+# impute mean of feature without outliers and reassign as integer
+df.diabetes$BloodPressure[BP_out] <- sub_BP <- as.integer(mean(df.diabetes$BloodPressure[-BP_out]))
+```
+#### 2.3 `r colnames(df.diabetes)[3]`
+I found that `r df.outlier$Feature[3]` has `r df.outlier$Num.outliers[3]` outliers all with **`r unlist(df.outlier$list.unique.out.dataVal[3])`** as the listed value. From a medical view point, 0 is not possible for humans that are alive. Therefore, all 0s are treated as missing values `NA` and imputed using the mean for *`r df.outlier$Feature[3]`* without those outliers present. The imputed integer for all `r df.outlier$Feature[3]`outliers, treated as missing value place holders, is  `r sub_BP`.
+
+```{r partD_2.4_SkinThickness_outliers}
+# NO CHANGE
+
+skinRange.wo <- unlist(df.outlier$rawRange.wo[4])
+# range of values without the outlier in glucose
+printRange_wo <- paste(skinRange.wo)
+```
+#### 2.4 `r colnames(df.diabetes)[4]`
+`r df.outlier$Feature[4]`only has `r df.outlier$Num.outliers[4]` outlier with the value `r unlist(df.outlier$unQ.val[4])`. Without this value the range is [`r printRange_wo`]. This is tough, because I assume this column is a percent out of 100 ; but according to the Boehringer Inelheim International GmbH the normal rating scale of skin thickness is [0,3].[^4] Because I assume this is a percent for `r df.outlier$Feature[4]`, while `r max(unlist(df.outlier$list.outlier.dataVal[4]))` is indeed an outlier, the value is not an impossibility and therefore I will leave it as is in the data set.
+
+[^4]: Boehringer Ingelheim International GmbH. (2025). *Skin thickness test.*
+https://patient.boehringer-ingelheim.com/more-than-scleroderma/understanding-scleroderma/testing-for-scleroderma/skin-thickness-test
+
+```{r partD_2.5_Insulin_outliers}
+# NO CHANGE
+# original data fram for all insulin values above 174
+geq174 <- length(which(df$Insulin > 174))
+notDb174 <- length(which(df.diabetes[,5] > 174 & df.diabetes$Outcome == 0))
+# percent not diabetic with 174+ insulin
+notDb_perc <- round((geq174/notDb174)*100, 1)
+# range of insulin without outliers
+inRange.wo <- unlist(df.outlier$rawRange.wo)
+```
+
+#### 2.5 `r colnames(df.diabetes)[5]`
+The feature `r df.outlier$Feature[5]` seems to follow the *pmol/L* international insulin measure [^5]. The normal range for a fasting individual's insulin at blood draw consists of [35, 174] in pmol/L, with elevated levels considered to by > 174 pmol/L. [^6] There are `r df.outlier$Num.outliers[5]` *`r df.outlier$Feature[5]` Outliers* with values above `r (inRange.wo[1] - 1)`. However, there are also `r geq174` insulin readings > 174 pmol/L, where `r notDb174`values are listed as individuals without diabetes. 
+
+Clinical Significance Standards, have insulin correlated with diabetes, but given the read out range of values, it is more likely that the individuals were not fasting than it is likely to be a data error [^7]. The absolute average for Insulin z-Scores is `r df.outlier$AvgZ[5]` where the graphical distribution does seem to have a higher cut off for z-Score; but since the values are within the normal insulin range *where fasting is not present*, I will not alter the Insulin Outlier values. However, this feature is likely to be removed during kNN modeling for the same reasoning, as `r notDb_perc`% of *elevated insulin* are non-diabetic patients.
+
+[^5]: "What are Normal Insulin Levels" (https://www.newhealthadvisor.org/Normal-Insulin-Levels.html)[https://www.newhealthadvisor.org/Normal-Insulin-Levels.html]
+[^6]: pmol/L to $ \mu IU$/mL conversion calculator: (https://mmoll-to-mgdl.com/conversion/Insulin-Unit-Converter.html#:~:text=Conversions%3A%201%20pmol%2FL%20%E2%89%88%200.144%20%C2%B5IU%2FmL%20%28based%20on,factors%20may%20vary%20slightly%20by%20assay%E2%80%94consult%20lab-specific%20standards)[https://mmoll-to-mgdl.com/conversion/Insulin-Unit-Converter.html#:~:text=Conversions%3A%201%20pmol%2FL%20%E2%89%88%200.144%20%C2%B5IU%2FmL%20%28based%20on,factors%20may%20vary%20slightly%20by%20assay%E2%80%94consult%20lab-specific%20standards]
+[^7]: Fastin required for insulin levels as diagnostic in diabetes blood draw https://pmc.ncbi.nlm.nih.gov/articles/PMC6501531/
+
+```{r partD_2.6_BMI_outliers}
+# replace all low end values with average BMI exclude outliers
+# index for bmi outlier
+bmi_out <- unlist(df.outlier$list.z.Index[6])
+# unique values ordered:  0.0  1.6 57.3 59.4 67.1
+unQ.bmi <- sort(unlist(df.outlier$list.unique.out.dataVal[6]))
+
+# raw data values for markdown use/counts
+bmi.Raw <- unlist(df.outlier$list.outlier.dataVal[6])
+indexLOW.bmi <- which(bmi.Raw < 5)
+numLOW.bmi <- length(indexLOW.bmi)
+numNOTreplace <- length(bmi_out) - numLOW.bmi
+replace.bmi <- bmi_out[indexLOW.bmi]
+
+df.diabetes$BMI[replace.bmi] <- sub_bmi <- round(mean(df.diabetes$BMI[-bmi_out], digits = 1))
+```
+#### 2.6 `r colnames(df.diabetes)[6]`
+##### EDIT THIS AREA cuz table
+Upon evaluation of `r df.outlier$Feature[6]` Outliers, `r numLOW.bmi `outliers are `r unQ.bmi[1]` or `r unQ.bmi[2]` while `r numNOTreplace` are not.
+
+All `r unQ.bmi[1]`s can be assumed to be missing values (`NA`) because this `r df.outlier$Feature[6]` score is not possible, even if someone was extremely emaciated. The *missing* values will be imputes using the mean of `r df.outlier$Feature[6]` feature data without *any* outliers included. If you look at the table representing the BMI value in df.diabetes and that value's corresponding z-Score, it is clear that *raising the cut-off value* for outliers will not work.  If thee outlier cut-off for z-Score was raised from 3 to 4 it would include  and impossible BMI value and exclude rare BMI values though they are not impossible.[^8]
+
+While I am inclined to believe the  is a miss entry where the decimal place was moved left on accident, that value is still very underweight; on the other side  is very even when compared to the CDC growth chart that has the upper 99.99% of individuals near 53 BMI , but they have z-scores of up to 5.0 which is past 60 BMI. Due to all of these factors, the upper end of outliers will remain unchanged, while the BMI values of 0 and  will be treated as `NA` missing values, and imputed using the mean that is calculated *while still excluding any data point exceeding a +/- 3.0 z-Score*.
+
+[^8]: CDC Extended BMI-fo-age Growth Charts (2022) (https://www.cdc.gov/growthcharts/Extended-BMI-Charts.html)[https://www.cdc.gov/growthcharts/Extended-BMI-Charts.html]
+
+```{r partD_2.7_DPF_outliers}
+# NO CHANGE, Family Pedigree
+# outliers z-score scores
+DPF_out <- unlist(df.outlier$list.z.Outliers[7])
+# z-Score range
+DPF.outRange <- round(range(DPF_out),2)
+Zrange_DPF.print <- paste(DPF.outRange, collapse = ", ")
+
+# z-Score range without outliers
+DPF_range.wo <- round(unlist(df.outlier$zRange.wo[7]), 2)
+Zrange_wo.print <- paste(DPF_range.wo, collapse = ", ")
+
+# left as numerical and not encoded to have some ordinal rank due to this output resulting from a function with continuous values, not discrete
+unQ_DPF <- unlist(df.outlier$list.unique.out.dataVal)
+count_DPF <- length(unQ_DPF)
+```
+#### 2.7 `r colnames(df.diabetes)[7]`
+`r df.outlier$Feature[6]` feature is referring to a family tree for diabetes in an individual's history. However this is a continuous variable with `r count_DPF` unique values in the `r nrow(df)` possible obeservation values. Because the *Function* is unknown for this feature and the values are not categorically discrete, it is difficult to make informed decisions on outliers. However, as the `r length(DPF_out)` outliers have a z-Score range of [`r Zrange_DPF.print`] and the data range without outliers  [`r Zrange_wo.print`], I believe leaving the outliers in the data set is fine.However in future evaluations, such as linear regression, this may not be an effective predictor just like "Glucose".
+
+```{r partD_2.8_Age_outliers}
+# NO CHANGE
+ageRange_w <- range(df$Age)
+ageRange_w.print <- paste(ageRange_w, collapse = ", ")
+ageRange_wo <- unlist(df.outlier$rawRange.wo[8])
+ageRange_wo.print <- paste(ageRange_wo, collapse = ", ")
+# outlier values
+age_RawOut <- sort(unlist(df.outlier$list.unique.out.dataVal[8]))
+age_out.val <- paste(age_RawOut, collapse = ", ")
+```
+#### 2.8 `r colnames(df.diabetes)[8]`
+All ages of participants in the study are within reasonable age bounds [`r ageRange_w.print`] for people's life expectancy, with `r df.outlier$Num.outliers[8]` outliers having one of the following values : `r age_out.val`. While the range of age values not including identified outliers is [`r ageRange_wo.print`], I will not be changing them.
+
+```{r}
+# re do shapiro wilks? with each to see new normality scores? add to df.outlier
+```
+
+### 3. Normalize the Data : z-Score Standardization
+#### 3.1-9 Utilize `scale()` function to re-scale all `df.diabetes` data after all `NA` and Outliers are Handled
+```{r partD_normalize_data}
+# use scale() for z-score standardization (since I already calculated z-score manually above)
+df.norm <- scale(df.diabetes[,1:8])
+head(df.norm, 5)
+```
+
+### 4. Encoding Categorical Features
+
+#### 4.9 Indicator Feature **`r colnames(df.diabetes)[9]`**
+```{r partD_4_label.encoding_Outcome}
+# label indicator feature "Outcome" ; 1= "Presence", 0 = "Absence" 
+# use  Factor for kNN accuracy test
+outcome_labels <- df.diabetes$Outcome <- factor(df.diabetes$Outcome, levels = c(0, 1),labels = c("Absence", "Presence"))
+```
+
+Indicator Feature **`r colnames(df.diabetes)[9]`** is already encoded with "0" to indicate if an individual *does not have* a diabetes diagnosis or with a "1" to indicate the individual *does have* a diabetes diagnosis. However I will relabel the Indicator Feature *Label Encoded* to be a *character* label in order to make the data and kNN model **Literate Programming** Forward; where 0 = False or **"Absence"** of Diabetes and 1 = TRUE or **"Presence"** of Diabetes.
+
+
+### 5. Split Data with Class Balance in Mind
+
+```{r partD_Split_data_Train_and_Validate}
+#set seed for practice runs reproducibility especially in proportion/class eval
+set.seed(789)
+
+# random sample to split the data
+train_index.split <- sample(1:nrow(df.norm), size = (nrow(df.norm)*0.80), replace = F)
+
+# 80% data to train
+df.train <- df.norm[train_index.split, ]
+train_labels <- outcome_labels[train_index.split]
+
+# 20% of data to make validate/test data frame 
+df.validate <- df.norm[-train_index.split, ]
+validate_labels <- outcome_labels[-train_index.split]
+```
+
+```{r partD_classBalance}
+# Evaluated proportions of Outcome Data in sets (use as.numeric to prevent redundant labels and rows when transposed)
+df.proportion <- data.frame(Train = as.numeric(table(train_labels)),
+                               Validate = as.numeric(table(validate_labels)),
+                               Overall = as.numeric(table(outcome_labels)))
+# transpose for proportion calculations ; transpose returns a matrix so use as.data.frame()
+df.propTable <- as.data.frame(t(df.proportion))
+# names of table transposed to dynamically encode (and ensure the correct label is assigned to a column)
+# transpose returns a matrix so use as.character()
+colnames(df.propTable) <- as.character(t(names(table(train_labels))))
+
+# discovered t() returns matrix when I attempted vector operation
+df.propTable$Absence_Proportion <- df.propTable$Absence / (df.propTable$Absence + df.propTable$Presence)
+df.propTable$Presence_Proportion <- 1 - df.propTable$Absence_Proportion
+```
+
+```{r partD_markdown_variables}
+# Ranges for proportion
+NoDx.Range <- range(df.propTable$Absence_Proportion)
+Dx.Range <- range(df.propTable$Presence_Proportion)
+
+# markdown table
+PropTable <- kable(df.propTable, digits = 3, caption = "Proportion of Data Outcomes across Sets", align = 'c') %>%
+  kable_styling(full_width = FALSE, bootstrap_options = 'striped')
+```
+
+`r PropTable`
+
+The data is also in a 80% Training Data Set and 20% Validation split, to prevent over fitting to the data set used for the kNN model predictions. I randomly chose `set.seed(789)` to generate the data sample in order to index overall data set for training versus testing model predictions (indicator feature). `set.seed()` also make results reproducible, especially as it relates to Part E, tough I do speculate that proportions would stay relatively equal regardless of seed number set based on the multiple runs and last assignment. The Absence (and conversely the Presence) Proportion range difference is only **`r round((NoDx.Range[2] - NoDx.Range[1])*100, 2)`%.** This is great because the kNN model will not have bias that causes one *Outcome Label* to be chosen over another  just because one classification category is underrepresented in the data set.
+<br><br>
+
+## PART E : Train a kNN Model
+
+Practicum I instructions restrict modeling techniques, methods, functions, and packages to those present in the lessons. Adjustment of hyper-parameters to make the kNN model more accurate are encouraged to achieve the best model accuracy. At this time no regression or *backwards feature elimination* is required/expected. Only 
+
+6. Train the kNN Model using Training Set found in #5
+7. Test the kNN Model Performance using the Validation Set found in #5
+Calculate Accuracy and repeat with different hyper-parameters with Accuracy as measure of success. Hyper-parameters to alter include:
+  - ***k*** representing the number of neighbors used to make a prediction, (model choose k neighbors and uses *mode* to determine data point prediction)
+  - ***Distance*** measures for determining how to calculate the distance between data points in the "*number of features*-dimensional" plane. Common methods (and the `knn()` argument parameter `method = ` options) for calculating distance include Euclidean, Manhattan, Minkowski, and Hamming Distance. There are several other distance methods but those are outside the scope of lesson application.
+  - 
+8. Repeat steps #6 and #7 for various "k" to find optimal value
+A typical starting point for kNN models is to use a $k = \sqrt{n} \:, where\; n = Number\: of\: observations$
+9. Calculate optimal "k" Model Accuracy
+
+### 6. Train the kNN Model using Training Set
+```{r partE_Train_knn_model}
+# class package knn()
+# k = sqrt(number of observations) starting point
+k_val <- round(sqrt(nrow(df)))
+# train 'model' predict presence of diabetes
+# default Euclidean Distance
+model_predictions <- knn(train = df.train,
+             test = df.validate,
+             cl = train_labels,
+             k = k_val)
+```
+
+### 7. Test the kNN Model Performance using Validation Set
+Using `CrossTable()` function from `class` package to evaluate overall accuracy of the table that reads like:
+
+|                              | Predicted Model <br> Negative | Predicted Model <br> Positive |
+|:----------------------------:|:-----------------------------:|:-----------------------------:|
+| **Actual Data <br> Negative**| True <br> Negative            | False <br> Positive           |
+| **Actual Data <br> Positive**| False <br> Negative           | True <br> Positive            |
+
+$$ \%\: \text{Accuracy} = \:\frac{\sum \text{"True" counts}}{\sum \text{Total counts}} \times \:100 $$
+
+```{r partE_Validate_knn_model_predictions}
+# CrossTable() from gmodels auto prints but same set up as table()
+# evaluate predictions versus labels for model
+conf.matrix <- CrossTable(x = validate_labels,
+                          y = model_predictions,
+                          prop.chisq = F)
+```
+
+```{r partE_CrossTable_dynamic_code}
+#counts of each
+num_cases <- conf.matrix$t
+#accuracy = correct/total = [1,1] + [2,2]
+overall_accuracy <- (num_cases[1,1] + num_cases[2,2])/sum(num_cases)
+# rate of negative = true negative / (true neg + false pos) ; so row of "absence" = row 1
+true_neg_perc <- round((num_cases[1,1]/sum(num_cases[1,])*100), digit = 1)
+# rate of positive = true positive / (true pos + false neg) ; so row of "presence" = row 2
+true_pos_perc <- round((num_cases[2,2]/sum(num_cases[2,])*100), digit = 1)
+# false negative= num model said negative when positive / sum of positive cases as %
+false_neg_perc <- round((num_cases[2,1]/sum(num_cases[1,]))*100, 1)
+# false positive = num model said positive when negative / sum of negative cases as %
+false_pos_perc <- round((num_cases[1,2]/sum(num_cases[2,]))*100, 1)
+k.model <- data.frame(k.value = k_val,
+              Accuracy = overall_accuracy,
+              True.Negative = true_neg_perc,
+              True.Positive = true_pos_perc,
+              False.Neg = false_neg_perc,
+              False.Pos = false_pos_perc)
+```
+`r k.model`
+Using the default starting suggestions for distance **(Euclidean)** and **'k' ($\sqrt{n} = `r k_val`$)** an overall accuracy of ***`r round(overall_accuracy*100, 1)`%*** is achieved with `r num_cases[2,2]` True Positive predictions (`r true_pos_perc`%). and `r num_cases[1,1]` True Negative predictions(`r true_neg_perc`%).
+
+### 8. Repeat Steps 6 & 7 to find optimal "k"
+Conduct repetitive testing with Hyper-Parameter Adjustments:
+- Distances : 
+  1. **Euclidean Distance** is considered a good general measure for the difference in features that are *scaled* continuous values of a general normal distribution and therefor is ideal for this problem that has numeric values.
+  2. Hamming is a difference in binary values , given the outcome is the only binary feature, this is not a good Distance to use
+  3. Manhattan is another Distance to consider and measures the numbers of "Manhattan City Blocks" away a point is from another. This is unlikely unless there was a different
+- **'k'** number of neighbors used to predict an "Outcome" for Diabetes Diagnosis here.
+
+```{r partE_alter_k_hyperParam}
+# k starting 28 (27.7 rounded) ; initial adjustment will looking
+k_vectorTRY1 <- seq(from = 12, to = 36 , by = 3) # 27
+k_vectorTRY2 <- seq(from = 22, to = 30 , by = 1) # 23, 25, 27 
+k_vectorTRY3 <- seq(from = 38, to = 54 , by = 2) # 42
+k_vectorTRY4 <- seq(from = 55, to = 95 , by = 5)
+# make one vector for simplicity of handling
+k_vectorTRY <- seq(from = 20, to = 45, by = 1)
+```
+
+```{r partE_define_k_testing function}
+only_change_k <- function(k_vector) {
+  false_neg_perc <- false_pos_perc <- true_neg_perc <- true_pos_perc <- accuracy_k.val <- numeric(length = length(k_vector))
+  for(i in 1:length(k_vector)){
+    # train
+    model_predictions <- knn(train = df.train,
+                             test = df.validate,
+                             cl = train_labels,
+                             k = k_vector[i])
+  # validate
+  num_cases <- table(x = validate_labels,
+                       y = model_predictions)
+  # accuracy
+  accuracy_k.val[i] <- (num_cases[1,1] + num_cases[2,2])/sum(num_cases)
+  # true negative / sum of negative cases
+  true_neg_perc[i] <- num_cases[1,1]/sum(num_cases[1,])
+  # true positive / sum of positive cases
+  true_pos_perc[i] <- num_cases[2,2]/sum(num_cases[2,])
+  # false negative= num model said negative when positive / sum of positive cases
+  false_neg_perc[i] <- num_cases[2,1]/sum(num_cases[1,])
+  # false positive = num model said positive when negative / sum of negative cases
+  false_pos_perc[i] <- num_cases[1,2]/sum(num_cases[2,])
+  }
+  return_matrix <- cbind(k_vector, accuracy_k.val, true_neg_perc, true_pos_perc, false_neg_perc, false_pos_perc)
+}
+```
+
+```{r partE_change_k_accuracy}
+# make df of all k values 20:45 at 80/20 split data
+df.k80 <- as.data.frame(only_change_k(k_vectorTRY))
+
+# max k accuracy search
+max_k.val <- max(df.k80$accuracy_k.val)
+```
+
+```{r partE_parkdown_opt_k}
+k_opt <- df.k80[which(df.k80$accuracy_k.val == max_k.val), "k_vector"]
+# display optimal k at 80% k = 30, 31
+optkTable <- kable(df.k80[which(df.k80$accuracy_k.val == max_k.val),], caption = "Highest Accuracy for k value at 80 : 20 Split for Test : Validate Data Sets") %>%
+  kable_styling(bootstrap_options = 'striped', full_width = TRUE)
+```
+`r optkTable`
+
+The overall optimal k is `r k_opt[1]` or `r k_opt[2]` with the same exact accuracy and bias for all four classification types : True Positive, True Negative, False Positive (Type I Error), and False Negative (Type II) error as seen above. This would likely lead to the selection of `r k_opt[2]`, while choosing the lowest k possible for the highest accuracy is ideal, the kNN model predicts based on majority or mode of a prediction, so I believe an odd number makes more sense for selection of *k* to prevent ties. Further evaluation of % Split could be evaluated to see if a Training set in the range [70,90] (and Validation set the remainder of Data) might be more ideal for preventing a specific bias. But as you can see the error rates are lower than the starting k, though both models are still close to each other.
+
+
+#### Note From me:
+I had realized / remembered that vector operations are better than a loop for R, but I had already reworked Part D too many times. I realized I should have been creating vectors from `lapply` or `sapply` and then binding the vectors together to make resultant data frames because it is more efficient, but I decided to not go back rework it as I am already very late in my submission. But I did try to maintain implementing vector operations going forward, which is why you see the style change. The large `df.outlier` is the result of probably 20-30 hours of work. I'm not joking when I say that I've worked on this Practicum for at least 9 days straight with a minimum of 5-6 hours a day. but usually 12. Granted there were multiple points where I decided greeting the rising sun was probably a sign to at least sleep for a few hours and hopefully reset my brain to tackle the problem later. My over problem is that I over think things, then going back to redoing sections over and over to get it to be more streamline, but I also struggle with perfectionism. I had attempted many other techniques (including caret) and other automation of features like % split that did not make it into my practicum. They were cut in favor of other methods, or in attempt at staying on a timeline submission. I did learn a ton through errors and R Help as always. I hope you can see my effort and know that I am not *slacking* off in my efforts of this class. Thank you for your time.

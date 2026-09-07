@@ -1,0 +1,282 @@
+---
+title: "DA5030 Descriptive Analytics"
+author: "Larkin, Yvonne"
+date: "Fall 2025"
+output:
+  html_document:
+    df_print: paged
+---
+
+### Q2
+```{r Q2_load_csv_to_df, echo = FALSE}
+#load kable libraries for table
+library(knitr)
+library(kableExtra)
+
+# load csv from URL to df.wines
+url <- "http://s3.us-east-2.amazonaws.com/artificium.us/datasets/whitewines.csv"
+df.wines <- read.csv(url,
+                     header = T,
+                     # not necessary because all values numeric but assignment said to do so
+                     stringsAsFactors = F) 
+```
+
+### Q3 
+## Analysis of the Structure of the Data
+```{r Q3_precheck_for_missing values, echo = F, include = FALSE}
+# manually/visually checked for any missing values, there were none so I did not use na.rm parameter in calculations
+missing_sugar <- which(is.na(df.wines$residual.sugar))
+missing_alcohol <- which(is.na(df.wines$alcohol))
+missing_sulphates <- which(is.na(df.wines$sulphates))
+missing_quality <- which(is.na(df.wines$quality))
+```
+
+```{r Q3_calculate_stats, echo=FALSE}
+#define my desired data frame by row name
+df.results <- data.frame(row.names = c('residual sugar', 'alcohol', 'sulphates','quality'))
+
+# calculate by row order for each columns value = median, 10% trim mean, sd [normality test separate]
+# did not do this but in future will assign target to another variable to reduce typing/copy and reduce error potential
+df.results$median <- sapply(df.wines[,c('residual.sugar','alcohol', 'sulphates', 'quality')], median)
+df.results$mean <- sapply(df.wines[,c('residual.sugar','alcohol', 'sulphates', 'quality')], mean, trim = 0.1)
+df.results$sd <- sapply(df.wines[,c('residual.sugar','alcohol', 'sulphates', 'quality')], sd)
+
+#Shapiro-Wilks Tests for Normality -> Yes/No desired values
+# APA citations and (long) explanation in 'Q3_citations_to_reduce_code' code chunk
+
+# store (same ordered) normality tests in a list 
+shapiro_list <- lapply(df.wines[,c('residual.sugar','alcohol', 'sulphates', 'quality')], shapiro.test)
+
+# index each element of shapiro_list and assign actual p-values (not sublist of p.values) to a named vector
+pvalues_vector <- sapply(shapiro_list, function(x) x$p.value)
+
+# evaluate based on standard p-value cutoff of 0.05; sample is also < 5000 (observations = nrow in df.wines which is 4898)
+# if p-value < 0.05 reject null hypothesis of normal distribution; meaning 'Not Normally Distributed'
+df.results$normality <- ifelse(pvalues_vector < 0.05, 'No', 'Yes')
+
+
+#APA Copilot help with <br> to format: Copilot. (2025, September 17). "kable() wrap text or line break". M365 Copilot.https://m365.cloud.microsoft/chat/entity1-d870f6cd-4aa5-4d42-9626-ab690c041429/eyJpZCI6IlZYTmxjbFl4ZkdoMGRIQnpPaTh2YzNWaWMzUnlZWFJsTFdsdWRDNXZabVpwWTJVdVkyOXRMM3hQU1VRNlpUQXhaV1pqT1dFdE9EWmxOQzAwWlRVMkxUZzFOMlF0WldaaU1qa3lNVEk0TTJSa2ZESmtOMlU1TmpNM0xUWXdPVE10TkRjeFpTMDROelUxTFRSaU16aGtZelJsWWpNNE1Yd3lNREkxTFRBNUxURTNWREl6T2pRNE9qUXlMakEyTnprek5UbGEiLCJzY2VuYXJpbyI6InNoYXJlTGlua1ZpYVBvcG92ZXIiLCJwcm9wZXJ0aWVzIjp7InByb21wdFNvdXJjZSI6InVzZXIiLCJjbGlja1RpbWVzdGFtcCI6IjIwMjUtMDktMTdUMjM6NDg6NDIuMTgyWiJ9LCJjaGF0VHlwZSI6IndlYiIsInZlcnNpb24iOjEuMX0
+# didn't actually ask to print this but since it was made I still printed it
+Q3results_format <- kable(df.results, format = "html", digits = 2, caption = c("Analysis of Wine Data Metrics <br> and if Normally Distributed"), escape = F) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+`r Q3results_format`
+
+### Q4 
+## Correlation Analysis
+```{r Q4_SpearmanRho_correlation_matrix, echo=FALSE, warning=FALSE}
+# use Spearman Rho coefficient of correlation (method = 'spearman') to show the correlation between each pair of the features 
+# need a 4x4 matrix ; correlation to self = 1, otherwise value will display twice because (row_alcohol x col_sulphates) == (col_alcohol x row_sulphates)
+
+# initialize empty matrix instead of data frame because of assignment wording
+spearman_matrix <- matrix(data = NA, 
+                             nrow = 4, 
+                             ncol = 4, 
+                             dimnames = list(c('Residual Sugar','Alcohol', 'Sulphates', 'Quality'),
+                                             c('Residual Sugar','Alcohol', 'Sulphates', 'Quality')))
+
+# manually assigned them because things got complicated real fast defining as stand alone function and I was spending way too much time on it
+row_metric <- c('residual.sugar','alcohol', 'sulphates', 'quality')
+for(i in 1:4){
+  spearman_matrix[i, 'Residual Sugar'] <- cor(df.wines[,row_metric[i]], df.wines$residual.sugar, method = 'spearman')
+  spearman_matrix[i, 'Alcohol'] <- cor(df.wines[,row_metric[i]], df.wines$alcohol, method = 'spearman')
+  spearman_matrix[i, 'Sulphates'] <- cor(df.wines[,row_metric[i]], df.wines$sulphates, method = 'spearman')
+  spearman_matrix[i, 'Quality'] <- cor(df.wines[,row_metric[i]], df.wines$quality, method = 'spearman')
+}
+
+# format correlation matrix values in a table to print
+Scor_table <- kable(spearman_matrix, digits = 2, format = "html", caption = "Spearman Rho Correlation Matrix <br> for Wine Metrics listed", escape = F) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+`r Scor_table`
+
+### Q5
+```{r Q5likem-coefficient_function, echo=FALSE}
+# define function for likem-coefficient instead of vector operation for clarity
+likem_coefficient <- function(a, s, h) {
+  # a = alcohol, s = sugar, h = sulphates
+  cal_value <- a / ((s^2)*sqrt(h))
+  #log() in R is base e so ln() not base 10, defining base as 10 because that is math standard
+  likem_co <- log(cal_value, base = 10)
+}
+
+# calculate new column for df.wines
+df.wines$likem.coefficient <- likem_coefficient(df.wines$alcohol, df.wines$residual.sugar, df.wines$sulphates)
+
+# find Spearman Rho correlation coefficient (to be consistent since none specified) to quality
+qual_likem_cor <- cor(df.wines$quality, df.wines$likem.coefficient, method = 'spearman')
+
+# evaluation for dynamic markdown printing ; made a function
+cor_eval <- function(x){
+  pos_neg <- ifelse(x > 0.0 & x != 0, "positive","negative")
+  x <- abs(x)
+  # initially used ifelse(x,'value', break | next | return) but first 2 broke loop and last overwrote variable relation, so did series of if(){}else if(){}
+  if(x >= 0.0 & x < 0.25){
+    relation <- paste('no relationship but', pos_neg)
+    }else if(x >= 0.25 & x < 0.5){
+      relation <- paste('weak', pos_neg)
+      }else if(x >= 0.5 & x < 0.75){
+        relation <- paste('moderate', pos_neg)
+        }else if(x >= 0.75 & x < 0.99){
+          relation <- paste('strong', pos_neg)
+          }else if(x == 1){
+            relation <- paste('perfect', pos_neg)
+            }
+  return(relation)
+}
+# relationship assessment of cor value between quality and likem-coefficient
+relation_qlm <- cor_eval(qual_likem_cor)
+```
+
+*We define the "Likem-coefficient" by the formula below and found that there is a `r relation_qlm` correlation between the coefficient and "quality" (Spearman Rho coefficient of `r round(qual_likem_cor, digits = 2)`)*
+
+$$
+\log_{} \left( \frac{a}{s^{2} \sqrt{h}} \right)
+$$
+where, <br> <br>
+*s* = "sugar", <br>
+*h* = "sulphates", <br>
+*a* = "alcohol" <br>
+
+### Q6
+```{r Q6_scatter_plot, echo=FALSE}
+alc_sug_cor <- cor(df.wines$alcohol, df.wines$residual.sugar, method = 'spearman')
+
+# basic scatterplot
+plot(df.wines$alcohol,
+     df.wines$residual.sugar,
+     xlab = "Alcohol",
+     ylab = "Residual Sugar",
+     main = c("Scatterplot Correlation : ", "\n", "Between Wine's Alcohol and Sugar Content"),
+     type = 'p')
+
+# overlay general trend line used abline and lowess from R Help instructions just used the lowess for smoothed line
+lines(lowess(df.wines$alcohol, df.wines$residual.sugar), col = 'orange')
+```
+
+From the scatter plot, it* visually appears that there are incremental steps down* in Residual Sugar Content as the Wine's Alcohol Content increases. The smooth lowess fit line does not have a steep slope but you can see it is a negative slope. *The Spearman Rho Coefficient* is equal to **`r round(alc_sug_cor, 2)`**, which agrees that there is **negative** correlation but also it would be categorized as a **weak correlation** between *alcohol* and *sugar*.
+
+### Q7 
+## Analysis of Sugar Content
+```{r Q7_trim10_means, echo=FALSE}
+#index to make 2 groupings
+index_above10 <- which(df.wines$alcohol >= 10.0)
+# object assign less10 and more10
+less10 <- df.wines[-index_above10,'residual.sugar']
+more10 <- df.wines[index_above10,'residual.sugar']
+
+#indexed values for mean trim 10%
+sugar_above10 <- mean(more10, trim = 0.10)
+sugar_below10 <- mean(less10, trim = 0.10)
+
+# difference in means use abs()
+diff_mean10 <- abs(sugar_above10) - abs(sugar_below10)
+abs_diff_mean <- abs(diff_mean10)
+
+# test normality of each group's distribution
+less10_shapiro <- shapiro.test(less10)
+more10_shapiro <- shapiro.test(less10)
+
+#if one OR both are not normally distributed use wilcox, if both are normal use t-test
+wilcox_eval <- if(less10_shapiro$p.value < 0.05 | more10_shapiro$p.value < 0.05){
+  
+  # determine if only one is not normal
+  num_not_norm <- ifelse(less10_shapiro$p.value < 0.05 & more10_shapiro$p.value < 0.05, "Both samples are not normally distributed ", "Only one sample is not not normally distributed ")
+  
+  # Wilcoxon Rank-Sum Test for not normal(non-parametric)
+  #industry also uses z-test but not directly supported in R so using Wilcoxon rank-sum
+  
+  # determine if paired (Wilcoxon Sign) or unpaired (Wilcoxon Rank-Sum)
+  logic_object <- ifelse(length(less10) == length(more10), TRUE, FALSE)
+  
+  # assign wilcoxon rank-sum test summary to object to index
+  wilcox_alc_sugar <- wilcox.test(less10, more10, paired = logic_object, alternative = 'two.sided')
+  
+  # index pvalue to evaluate
+  wilcox_pvalue <- wilcox_alc_sugar$p.value
+  
+  # indicate which Wilcoxon Test used cuz same function
+  logic_object <- ifelse(logic_object == TRUE, " Paired Wilcoxon Sign", " Unpaired Wilcoxon Rank-Sum")
+  
+  #define a print statement based on 0.05 threshold for p.value
+  wilcox_eval <- ifelse(wilcox_pvalue < 0.05, ". Because the p.value is less than alpha = 0.05, the null hypothesis is rejected. Meaning there is a ", ". Because the p.value is greater than alpha = 0.05, it fails to reject the null hypothesis, meaning there is no ")
+  
+  markdown_statement <- paste0(num_not_norm, "and the", logic_object, " Test calculated a p-value rounded to the fourth decimal place as ", format(round(wilcox_pvalue, 4), nsmall = 4, scientific = F), wilcox_eval, "statistically significant difference between the two sample means.")
+} else {
+  #if both normal distributions proceed with regular 2-sample t-test
+  ttest_alc_sugar <- t.test(less10, more10)
+  ttest_pvalue  <- ttest_alc_sugar$p.value
+  # print statement for markdown
+
+  wilcox_eval <- ifelse(wilcox_pvalue < 0.05, "The p-value is < 0.05, because of this the null hypothesis is rejected, meaning there is a statistically significant difference between the sample means.", "The p-value is > 0.05, because of this it fails to reject the null hypothesis. This indicates there is no statistically significant difference between the 2 sample means.")
+}
+```
+
+The **10% trimmed mean** of *residual sugar* for wines with an *alcohol content* at or **above 10** is **`r round(sugar_above10, 1)`**. While in comparison the 10% trimmed mean of residual sugar for wines with an alcohol content **below 10** is **`r round(sugar_below10, 1)`**. This is a mean difference of **`r round(abs_diff_mean, 1)`**. `r wilcox_eval`
+
+### Q8 
+## Identification of Outliers
+```{r Q8_identify_outliers, echo=FALSE}
+#quality chlorides and density outlier z-score > 2.0
+# use normal distribution for 95% CI on 2 tailed test
+prob_norm <- qnorm(0.975)
+
+# columns of interest
+calc_cat <- df.wines[,c('quality', 'chlorides', 'density')]
+
+# calculate each z score = (x-mean)/sd
+df.wines$z_quality <- (df.wines$quality - mean(df.wines$quality))/sd(df.wines$quality)
+df.wines$z_chlorides <- (df.wines$chlorides - mean(df.wines$chlorides))/sd(df.wines$chlorides)
+df.wines$z_density <- (df.wines$density - mean(df.wines$density))/sd(df.wines$density)
+
+# sum how many are outside of z-score > +/- 2.0
+# because which returns a vector find length for # of outliers
+quality_outliers <- length(which(abs(df.wines$z_quality) > 2.0))
+chlorides_outliers <- length(which(abs(df.wines$z_chlorides) > 2.0))
+density_outliers <- length(which(abs(df.wines$z_density) > 2.0))
+
+# table rows = category ; columns = mean, sd , #outliers sd, z-score # outliers, 
+df.outliers <- data.frame('Avg.Metric' = sapply(calc_cat, function(x) round(mean(x), 2)),
+                          'St.Dev.' = sapply(calc_cat, function(x) round(sd(x), 2)),
+                          'Avg.Zscore' = sapply(df.wines[,c('z_quality', 'z_chlorides', 'z_density')], function(x) round(mean(abs(x)), 2)),
+                          '# Outliers' = sapply(c(quality_outliers, chlorides_outliers, density_outliers), round, digit = 2))
+
+#rename rows and columns
+rownames(df.outliers) <- c("Quality", "Chlorides", "Density")
+colnames(df.outliers) <- c("Average <br> Wine Metric", "Standard <br> Deviation", "Average Metric <br> Z-score", "# Outliers <br> Z-score > 2.0")
+  
+#format df.outliers to display in HTML (did that since we could choose one)
+format_outliers <- kable(df.outliers,
+                         format = "html",
+                         align = 'c',
+                         escape = F,
+                         caption = "Number of Outliers for Wine Data by Metric") %>%
+  kable_styling(full_width = F, 
+                bootstrap_options = "striped")
+```
+
+`r format_outliers`
+
+```{r Q3_citations_to_reduce_code, echo=FALSE, include=FALSE}
+# initial exploration of storing shapiro.test to a list and how, initially used sapply but that stored all 4 components ('statistic', 'p.value', 'method', 'data.name') as separate lists and so I needed lapply; then the opposit happened when trying to index within the lists I had created
+
+# Utilized a lot of exploration in Console, Environment, and Help windows within RStudio to read on functions lapply(), sapply(), ifelse(), and Error feedbacks - I figured out many ways to proceed but wanted to try and figure out best way and why. Eventually, even though I found ways to continue, I asked Copilot for help on 2 parts:
+
+# 1. 
+#Why was ifelse() not working like a vector operation when indexing in a list <- kinda answers based on that but still I was confused, it told me sticking with sapply or lapply was the way to go. So I needed a function which was a lot of trial on notations and taking the error feedbacks
+
+# APA citation : Copilot. (2025, September 16). "Error in shapiro_list[[x]]". M365 Copilot.https://m365.cloud.microsoft/chat/entity1-d870f6cd-4aa5-4d42-9626-ab690c041429/eyJpZCI6IlZYTmxjbFl4ZkdoMGRIQnpPaTh2YzNWaWMzUnlZWFJsTFdsdWRDNXZabVpwWTJVdVkyOXRMM3hQU1VRNlpUQXhaV1pqT1dFdE9EWmxOQzAwWlRVMkxUZzFOMlF0WldaaU1qa3lNVEk0TTJSa2ZHVXhaRGMyTnpSbUxUWTROVGd0TkRRME9TMWhZbVJoTFdZMFl6QXhPV0U0WVdObVlYd3lNREkxTFRBNUxURTJWREl3T2pNNE9qQTNMakU1TWpZNE1WbyUzZCIsInNjZW5hcmlvIjoic2hhcmVMaW5rVmlhUG9wb3ZlciIsInByb3BlcnRpZXMiOnsicHJvbXB0U291cmNlIjoidXNlciIsImNsaWNrVGltZXN0YW1wIjoiMjAyNS0wOS0xNlQyMDozODowNi41MDJaIn0sImNoYXRUeXBlIjoid2ViIiwidmVyc2lvbiI6MS4xfQ
+
+# create function x['p.value'] in order to index from list using sapply 
+
+# sapply and lapply both gave me a list object but I prefer format of sapply since it tries to provide a vector. I could further condense this using arguement 'simplify = T'. Tested in console and explored in environment tab. This was great and I liked that I could easily index from it (did multiple tests with sapply and lapply)
+
+# initially function(x) x['p.value'] but while investigating mode()/R type I arrived at a 'list' or 'numeric' depending on multiple indexing, assignment, and function evaluations. I want 'numeric' so I can test p value threshold. I figured out which notations and indexing WERE different and which would give me 'numeric' but I didn't understand why so I asked Copilot why list[[x]]['p.value'] is not the same as list[[x]]$p.value even though "==" would indicate they are and says the first method would need to unlist() 
+
+# APA citation : Copilot. (2025, September 16). "Index difference in pvalues_list[[1]] + ['p.value'] and $p.value". M365 Copilot. https://m365.cloud.microsoft/chat/entity1-d870f6cd-4aa5-4d42-9626-ab690c041429/eyJpZCI6IlZYTmxjbFl4ZkdoMGRIQnpPaTh2YzNWaWMzUnlZWFJsTFdsdWRDNXZabVpwWTJVdVkyOXRMM3hQU1VRNlpUQXhaV1pqT1dFdE9EWmxOQzAwWlRVMkxUZzFOMlF0WldaaU1qa3lNVEk0TTJSa2ZHTmlNVEUxTW1SaExUSXlNRGd0TkdRMU1pMWlObU0yTFdKall6STRabUUyWVRsallYd3lNREkxTFRBNUxURTJWREl4T2pRd09qUXdMamc0TURrME56RmEiLCJzY2VuYXJpbyI6InNoYXJlTGlua1ZpYVBvcG92ZXIiLCJwcm9wZXJ0aWVzIjp7InByb21wdFNvdXJjZSI6InVzZXIiLCJjbGlja1RpbWVzdGFtcCI6IjIwMjUtMDktMTZUMjE6NDA6NDAuMjY2WiJ9LCJjaGF0VHlwZSI6IndlYiIsInZlcnNpb24iOjEuMX0
+
+# so with all of this I reduced multiple lines and trials to sapply() using $p.value to make numeric vector
+```
+

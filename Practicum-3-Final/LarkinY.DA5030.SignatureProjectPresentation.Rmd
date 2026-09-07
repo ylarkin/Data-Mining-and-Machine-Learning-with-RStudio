@@ -1,0 +1,1742 @@
+---
+title: "Heterogeneous Regression Ensemble to Determine the Effects of Alcohol on Student GPA"
+author: "Larkin, Yvonne"
+date: "Fall 2025 / December 3, 2025"
+output:
+  html_document:
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: true
+    df_print: paged
+subtitle: "DA5030 Signature Project"
+---
+
+## Signature Project : [Effects of Alcohol on Student Performance](https://www.kaggle.com/datasets/joshuanaude/effects-of-alcohol-on-student-performance) [^3] <br><br>
+
+# 1. Business Understanding :
+
+Objective : Build a heterogeneous ensemble model of homogeneous ensembles to predict a student's GPA based on provided predictor features with the goal of seeing alcohol effect on student performance. <br><br>
+
+Overall question is "Does Alcohol impact a student's grades? If so, is it predictable based on other metrics?"
+It is unclear whether there is a quantifiable prediction assessment for the GPA given a set number of predictors. If it is able to be quantified that would be great, and can assists in helping students who may have drinking habits that negatively affect their performance in school, and potentially identify specific areas that disproportionately increase this impact.
+
+# 2. Data Understanding :
+
+### Data Background Information :
+
+- Dataset found on kaggle.com
+- License : Open Database Contents
+- Uploaded March 06, 2024 (coverage end date March 24, 2024) 
+- authors/publishers : Joshua Naude and Jordan Bendeman
+- data  from : Department of Statistics and Actuarial Science, Stellenbosch University, South Africa
+- Google Forms Survey filled out by Stellenbosch University students
+
+#### Dataset Specifics: Gathered from kaggle [^1]
+
+- **Suggested Target** Response Variable ($Y_i$) on kaggle : "to predict students academic performance (grades) using a multilinear regression model built on predictors mentioned based on 2023 student information" stated as :
+
+  - Study_Year_Avg : numeric continuous : the academic average the student achieved in 2023 in percentage
+    - [0,100]
+- Independent Variables ($X_i$) : Categorical and Numeric
+  - isFemale : the isFemale/gender of the studens
+    - Male, Female
+  - Matric_Avg : students matric [^2] average in percentage
+    - [0,100]
+  - Study_Year : the student's current year of academic studies
+    - 1st, 2nd, 3rd, 4th, Postgraduate
+  - faculty Department under which the student's degree falls under at Stellenbasch university (listed in no particular order)
+    1. AgriSciences
+    2. Arts & Social Sciences
+    3. Economic & Management Sciences
+    4. Education
+    5. Engineering
+    6. Law
+    7. Medicine & Health Sciences
+    8. Military Science
+    9. Science
+    10. Theology 
+  - Accom_Status : accommodations status of the student indicates if the student stays in Stellenbosch University accommodation or other private accommodation 
+    - Private, Non-private 
+  - mon_allowance : How much the student receives as a monthly allowance while in Stellenbasch; available bins 
+    - 4001-5000, 5001-6000, 6001-7000, 7001-8000, 8000+ 
+  - Scholarship : Is the student on some kind of funding program or not
+    - Yes, No
+  - Wkly_Stdy_Hrs :  The amount of time a student spends studying over and above their weekly lectures
+    - 0, 1-3, 3-5, 5-8, 8+
+  - Socializing_Freq :  How often the student goes out socializing with their friends. This could be clubbing, going for drinks, going out for dinner
+    - 0, 1, 2, 3, 4+, only weekends
+  - Drinks_per_Night [^3] : When a student does go clubbing how many alcoholic drinks they consume while out
+    - 0, 1-3, 3-5, 5-8, 8+ 
+  - Missed_Classes : How many classes the student misses per week based on reasons caused by alcohol (e.g. hungover or tired)
+    - 0, 1, 2, 3, 4+
+  - Failed_Modules :  How many modules the student has failed thus far in their studies
+    - 0, 1, 2, 3, 4+
+  - Relationship : Is the student in a romantic relationship or not
+    - Yes, No
+  - Approval : Does the student's parent(s) approve of alcohol
+    - Yes, No
+  - Parent_Strength : How close the student's relationship is with their parent(s)
+    - very close, close, fair, distant
+    
+## Load Necessary Packages and DataFiles for Project [^4]
+
+The above information indicate the google survey's features, listed responses, and generally defined meaning. After review of the data file I have made a could of alterations to feature, name and numeric encoding value assigned. A large difference is the **Response Variable**, the overview cite has "Study_Year_Avg" in the `.csv` loaded in the next section, the feature names are actually fully syntactic questions. Additionally, the feature corresponding to "Student_Year" is indicated as the *student's current year* of academic study, whereas the `.csv` file indicates that the *Year* is actually the previous to the current.where the calculations are retrospective.
+<br><br>
+I will alter the feature's column heading and the method of encoding for each so that I can use the data for ***multiple linear regression , support vector regression, and decision tree regression*** in order to predict the target feature for student performance based on average GPA achieved. Because of the three Regression models I will need to have both a numeric and factored data.frame for the training and testing stage.
+
+[^1]: [About Dataset Aim](https://www.kaggle.com/datasets/joshuanaude/effects-of-alcohol-on-student-performance)
+[^2]: [Matric](https://dictionary.cambridge.org/us/dictionary/english/matric) : a public exam in a range of subjects that is taken by some children in their final year of high school in South Africa, or the qualification from this
+[^3]: [Legal drinking age in South Africa is 18](https://en.wikipedia.org/wiki/Legal_drinking_age)
+
+## Load Packages
+```{r load_dependencies, warning=FALSE, echo=TRUE, message = FALSE}
+library(knitr)          # table printing
+library(kableExtra)     # table display format
+library(ggplot2)        # data visualization
+library(caret)          # train, trainControl, grid, etc...
+library(e1071)          # SVR in caret requires kernlab and e1071
+library(randomForest)   # rf in caret requires randomForest
+library(kernlab)        # alpha masked from ggplot2 because of this
+library(glmnet)         # Lasso/Ridge
+library(psych)          # pairs panels
+```
+
+The data file is downloadable from kaggle as a `.zip`. The file was downloaded and extracted in the local R environment to load into a data frame for this journal report's purposes. The file `.zip` was previously inspected for file structure and content before download via `download.file()` --> `unzip()` --> `grep()`, so extra download safety parameters for multiple files or multiple named files were found to be unnecessary and thereby skipped.
+
+[^4]: Downloading and Extracting a .csv file is  new to me : Utilized Copilot prompt : 'for mode = "wb", can I dynamically code it to detect the user's system' & 'Can Windows not use "w"?' plus links to RCran Documentation for [download.file()](https://www.rdocumentation.org/packages/utils/versions/3.6.2/topics/download.file_)
+
+```{r download_zip_url_and_extract, warning=FALSE, echo=FALSE, message = FALSE}
+# create temporary file paths
+zip_path <- tempfile(fileext = ".zip")
+extract_dir <- tempdir()
+
+# download zip-file from url
+url <- "https://www.kaggle.com/api/v1/datasets/download/joshuanaude/effects-of-alcohol-on-student-performance"
+
+# dynamically code for user system (I have a windows)
+mode_setting <- ifelse(Sys.info()[["sysname"]] == "Windows", "wb", "w")
+download.file(url, destfile = zip_path, mode = mode_setting, quiet = TRUE)
+
+# unzip file
+files_in_zip <- unzip(zip_path, list = TRUE)
+# select .csv with grep to locate specific .csv match 
+csv_name <- files_in_zip$Name[grep("\\.csv$", files_in_zip$Name)][1]
+```
+
+```{r load_csv_data.frames, warning=FALSE, echo=FALSE, message = FALSE}
+# load as factor for preliminary str() and summary()
+df.fac <- read.csv(csv_name,
+               header = T,
+               stringsAsFactors = T)
+
+# load without factor to use for data wrangling
+df <- read.csv(csv_name,
+               header = T,
+               # don't load as factors to reassign values first
+               stringsAsFactors = F)
+```
+
+```{r print_original_file_headers, warning=FALSE, echo=FALSE, message = FALSE}
+google_survey_Qs <- sapply(colnames(df), function(x){
+  q <- gsub("\\.", " ", x)
+  question <- gsub("\\s+", " ", q)
+  return(question)
+})
+google_survey_Qs <- data.frame(Original_Headers = unname(google_survey_Qs))
+```
+
+```{r rename_feature_headers, warning=FALSE, echo=FALSE, message = FALSE}
+colnames(df) <- colnames(df.fac) <- c("timestamp","isFemale","matric_GPA",
+                                         "grade_lvl_2023","faculty",
+                                         "Target_gpa.23", "isPrivateAcc", "mon_allowance", 
+                                         "hasScholarship", "wk_study_hrs", "party_freq",
+                                         "avg_num_Drink", "n_class_skip_wk", 
+                                         "num_Fail.mod", "inRelationship",
+                                         "p_Approve_Alc", "p_Relationship")
+#append headers
+google_survey_Qs$Renamed_Headers <- colnames(df)
+feature_table <- kable(google_survey_Qs, align = c('l','r'), caption = "Data feature reassignment of header based on original `.csv` file questions")
+```
+
+```{r variable_rm_1, echo= FALSE, warning=FALSE, message=FALSE}
+rm(mode_setting, files_in_zip, zip_path, extract_dir, url)
+```
+
+`r feature_table`
+
+### Rename ``r csv_name`` File Headers
+
+Upon upload of the `.csv` file, the headers provided additional context for the dataset as it pertains to processing.I renamed the feature headers reflected in the table above for a few reasons:
+
+1. The kaggle overview seems to have miss labeled a few features, so for clarity I named them in a schema that matched the feature meaning
+2. For Binary features in particular, I renamed the features to reflect a more intuitive "Yes" "No" question response where the "Yes" will correspond to 1 for the encoding further into the data wrangling.
+3. To make printouts a little more condensed and palatable for the reader.
+
+## 1. Brief EDA using factor loaded data frame
+
+To gain a better picture of the dataset, using the `isStringAsFactor = TRUE` data will provide a more informative breakdown for character features by identifying the likely number of levels contained in the feature. While factors won't we used for the continuous regression "Lasso" or "SVR", it is needed for "Random Forest Regression". Additionally, som features could benefit from a classification method for imputation over a `mean/median/mode`. All observed `factor` features in `str()` and `summary()` are `character` strings but that doesn't mean an ordinal value can be used instead of category levels for the models that require numeric inputs and some numeric features can be categories to discrete values for "Random Forest" as well.
+
+### `str()`
+```{r str_1, , warning=FALSE, echo=FALSE, message = FALSE}
+# use factor loaded df
+str(df.fac)
+```
+
+### `summary()`
+```{r summary_1, warning=FALSE, echo=FALSE, message = FALSE}
+# use factor loaded df
+summary(df.fac)
+```
+From the `summary()` it is obvious that the factor levels need to be reassigned to be more model friendly , uniform data class entry with removal of special, either designating a singular data point to represent a range or actual factor bins for a range.  Once the data is uniform relationships between featurs can be assessed mor constructively.
+
+# 3. Data Preparation :
+### 1 Remove Unnecessary Feature : `timestamp`
+```{r remove_timestamp, warning=FALSE, echo=FALSE, message = FALSE}
+df <- df[,-which(colnames(df) == "timestamp")]
+df.fac <- df.fac[,-which(colnames(df.fac) == "timestamp")]
+```
+
+First step, is to remove unnecessary features and separate features into groupings for value assignment and indexing based on the Dataset Information and `summary()` output. <br><br>
+
+Unique ID for observation are the timestamped submission of the Google Survey. The timestamp is not helpful towards the regression modeling and can be submission from the observation user to identify/ track unique observations. The row indices can serve this purpose for modeling.
+
+### 2 Reorder Dataset to Match Modeling Standards : Column 1 is Target
+```{r reorder_df, warning=FALSE, echo=FALSE, message = FALSE}
+# reorder both data.frames
+target <- "Target_gpa.23"
+df <- df[,c(5,2,1,3,4,6:16)]
+df.fac <- df.fac[,c(5,2, 1,3,4,6:16)]
+```
+
+Based on the kaggle, .csv file headers, and brief EDA overviews, it appears that the dataset's intended target feature is the column originally titled "Your 2023 academic year average GPA in Ignore if you are 2024 1st year student" which is now reassigned to "Target_gpa.23". <br><br>
+
+I assign this feature as the target for a few reasons :
+
+1. The kaggle indicated feature name "Study_Year_Avg" is not listed in the dataset headers
+2. The kaggle indicated feature definition "This is the academic average the student achieved in 2023 in percentage(Numeric continuous) Response 0-100" matches the original header's meaning.
+3. It is one of 2 Features in the data set that has a Response range [0, 100] where the other feature is labeled as `matric_GPA`.
+
+As a result, the identified target will be moved to column position 1 in accordance with generally accepted standard practice for modeling.
+
+### 3 Manually Group Features : Continuous Numeric, Binary, Nominal, Ordinal/Discrete Numeric
+
+Because most of the Features have mixed values and can be encoded and coerced to suit the desired model's assumption, I am broadly grouping categories in anticipation of specific data handling requirements.
+
+### 3.1 GPA Continuous Range: Only 2 numeric loaded features
+
+The Target feature has a response range of [0,100] to indicate percentage, there is only one other feature with a continuous range, that is a response [0,100], that also indicates percentage and has to do with `GPA` ; it's `matric_GPA`. (Matric[^2] indicating 12th grade final testing results as it pertains to South Africa) With these features already similar in attributre and meaning, they are grouped together.
+
+```{r continuous_gpa_group}
+gpa_group <- c("Target_gpa.23", "matric_GPA")
+gpa_index <- which(colnames(df) %in% gpa_group)
+```
+
+### 3.2. Binary Features : 
+
+while binary features are a specific try of "Ordinal" category due to rank of 1 vs 0, it is also just as viably a one-Hot dummy encoding for a feature's presence and absence. I have already named the binary features in a "ask question for Yes/No response" actually listing them to a designated feat can help with indexing later
+
+```{r binary_group}
+# specific categorical with binary output
+binary_feat <- c("isFemale", "isPrivateAcc", "hasScholarship", "inRelationship", 
+                 "p_Approve_Alc")
+binary_index <- which(colnames(df) %in% binary_feat)
+```
+
+### 3.3. Nominal Features : 
+
+a nominal feature is one without any rank or direction but that has more than 2 levels for evaluation.There is only one feature that can be classified as nominal for categories, and that's `faculty` with 10 levels indicated in the kaggle overview, but only 9 appear present based on the `str()` overview.  This will ultimately lead to "dropped levels" for the feature as a level of `0` numeric value an cause computation errors of `NA` if careless and a `0` presence level is the absence of that level meaning no impact for the model's prediction when it has no associated magnitude.
+
+```{r nominal_group}
+# categorical nominal and ordinal
+nominal_feat <- "faculty"
+nominal_index <- which(colnames(df) %in% nominal_feat)
+```
+
+### 3.4. Ordinal/Discrete Numeric Features: 
+
+Ordinal Features and Discrete Numeric Features are 2 distinct groups, but because I need a data frame with ordinal factors and a data frame without any factors (i.e. numeric) the two groupings can be seen as approximations of each other depending on the scaling with binning or normalization. Because Ordinal Categories possess a rank with direction that can translate to a magnitude of increasing or decreasing value depending on the feature, it behaves like a number if not encoded `as.factor()`. And while there are feature listed with a *continuous range* provided those are binned and correspond specifically as a range to one data point, meaning the range must be reduced to a single data value to represent the range for numeric use or is factored as a binned range for classification/factor use. Due to these reasons, the ordinal and discrete numeric features are combined in this group since the features will be processed similarly depending on the target data frame, since both `numeric` and `facctor` are need to train all three ensemble models. 
+
+```{r ordinal_numeric_group}
+# numeric counts but discretized
+ordinal_feat <- c("grade_lvl_2023", "mon_allowance", "wk_study_hrs", "party_freq", "avg_num_Drink",
+                  "n_class_skip_wk", "num_Fail.mod", "p_Relationship")
+ordinal_index <- which(colnames(df) %in% ordinal_feat)
+```
+
+*Quick Review*<br><br>
+Overall, all features in this data set's predictor features are categorical with the exception of `matric_GPA` which is on a continuous scale like the target with range [0,100]. However, depending on the category option levels, and what that feature represents, so subjective and undefined rank features can be adjusted to try and delineate level value impact on the model. 
+
+## 2. Outliers : Preliminary
+
+The data set only exists withing predefined values, by this concept there are no "outliers" to remove because they are all legitimate values whee upper boundaries are in place to curb extreme values as indicated by the (+), even if some values are found to be far more scarce and further from a concentrated mean than others potential data points, it does not necessarily mean the outlier should be removed or imputed. I will revisit outliers, and visualizing the data once I standardize feature values numerically in order to assess them.
+
+## 3 & 4 Standardization & Missing Values : Preliminary Approach
+
+While 'outliers' needs to be postponed until after feature input values are standardized to either numeric, factored, or character features; missing values can be assessed with either `is.na()` for numeric or factored values or `""` indicating an empty string for character values. <br><br>
+
+During my preliminary approach, standardizing a feature was being somewhat simultaneous performed with the indexing and imputation of missing values for that feature. Normally, 'outliers' are handled before missing values are imputed to avoid extreme values from skewing the data imputation method, however as I stated in the section before, the data set is comprised of limited levels for the feature, where deeming a defined acceptable value as an 'outlier' due to deviance from the feature's observed mean for the given cohort's sample, isn't necessarily the best approach. <br><br>
+
+This is my 'second' run at this where I initially utilized `mode` and level specific `mean` values to impute missing values with reasoning. But for the sake of exploration and due to low model performance at the end the first run, I will standardized all data before any imputation occurs even if the imputation method remains the same for most. So that outliers are handled and correlations are assessed ahead of imputation. Therefore I will begin by making all missing values == `NA`uniformly and making the feature uniform across level entries.
+
+### 1 Inspect & Standardize Missing Values by Feature Column Index
+
+```{r find_missing_values, warning=FALSE, echo=FALSE, message = FALSE}
+# store unique and NA values in list
+unique_levels <- vector('list')
+missing_count <- vector('list')
+
+for (c in colnames(df)){
+  col <- df[[c]]
+  
+  # index NAs and enumerate them
+  missing_count[[c]] <- temp.na <- which(is.na(col) | col == '')
+  col[temp.na] <- NA
+  
+  # remove NA and '' empty strings from value display
+  unique_levels[[c]] <- temp.uQ <- table(col, useNA = "no", exclude = '')
+  
+  # impute NA back to df and other df
+  df[[c]] <- col
+  df.fac[temp.na, c] <- NA
+}
+
+# double check 
+test <- lapply(colnames(df), function(x){
+  any(x == '')})
+if (any(test) == TRUE) print("There are still empty strings that need to be converted to NA")
+```
+
+```{r overview_dataset_na_and_lvls, echo=FALSE, message=FALSE, warning=FALSE}
+uQ_feat <- sapply(unique_levels, length)
+na_feat <- sapply(missing_count, length)
+
+# print general overview
+overview_table <- data.frame(numNA = na_feat,
+                             numLvl = uQ_feat)
+top_na_ft <- overview_table[order(-overview_table$numNA),]
+
+# print overview; 
+ov_table <- kable(top_na_ft, caption = "Number of `NA` Values and unique levels present in each Feature")
+
+# index top NA feat
+max_na <- google_survey_Qs[which(google_survey_Qs$Renamed_Headers %in% rownames(head(top_na_ft,5))),]
+max_na <- kable(max_na, caption = "Features with the Most NA Values")
+```
+
+`r ov_table`
+
+From the print out above it is clear that a majority of NA values are related to the target `Target_gpa.23` and `Grade_Lvl_Last_Year`, with the original feature columns : <br><br>
+
+`r max_na`
+ 
+All of the top missing values seem to be influenced by the status of an incoming freshman. Meaning that many missing values can likely be attributed to "incoming freshman status." If the `Grade_Lvl_Last_Year` and `Target_gpa.23` are both missing then this observation is likely an incoming freshman. Before beginning standardization of most features as numeric, and the corresponding factor placeholders, missing values at the observation or pairwise level should be evaluated.
+ 
+```{r variable_cleanup1, echo = FALSE, warning=FALSE, message=FALSE}
+# clean up, maintain df and lists though
+rm(temp.na, temp.uQ, c, uQ_feat, na_feat, test, top_na_ft, col)
+```
+ 
+### 2. Inspect Pairwise / Observation Level Missing Values 
+```{r index_count_all_NA, warning=FALSE, echo=FALSE, message = FALSE}
+# list the count of NA present for an observation by the index number
+all_na <- table(unlist(missing_count))
+NA_by_Row <- sort(all_na)
+# aggregate by count now
+double <- table(NA_by_Row)
+obs_na <- data.frame(Number_of_NA = names(double),
+                     Obs_Count = as.vector(unname(double)))
+obs_na$Prop_NA_obs <- round(obs_na$Obs_Count/sum(all_na),3)
+obs_na$Prop_All_obs <- round(obs_na$Obs_Count/nrow(df),3)
+obs_na_table <- kable(obs_na, align = c('l','l','r','r'),caption = "Pairwise Prevelence of NA Incomplete Observations")
+```
+
+`r obs_na_table`
+
+```{r remove_idx_max_na_16, echo = FALSE, message=FALSE, warning=FALSE}
+# remove index from all dataframes to maintain 1:1 ration; even if overwriting a df will happen later
+idx_16 <- as.numeric(names(all_na[which(all_na == 16)]))
+# remove from all df
+df <- df[-idx_16,]
+df.fac <- df.fac[-idx_16,]
+```
+
+When all of the NA values are aggregated by frequency at the row index level it makes the missingness seem less widespread and more manageable. As the table indicates a majority of observations that contain NA values only have 1-3 missing values, depending on the feature these could be easily imputable or not that important.  There are a total of `r sum(all_na)` missing entries across `r sum(double)` observations with a data set of `r nrow(df)` still in use. Standardization of features to be numeric will allow for a better assessment of potential relations in the data features. ]
+<br><br>
+However we can confidently remove the `r length(idx_16)` observations missing all `r ncol(df)` features at `r paste0(idx_16, collapse = ", ")`. They can and should be removed from the data set before proceeding as they provide no benefit to a model prediction.
+<br><br>
+There are `r sum(obs_na$Obs_Count[which(obs_na$Number_of_NA %in% c(1,2,3))])` observations classified as low frequency missing values. These observations are still very needed for model creation given the data set's small size. However if the missing value is the target, the observation can only be useful if the target value can be reasonably assumed as correct by the selected imputation method. The rows with middle and low frequency `NA` presence do have a majority of other features filled out and should not be removed before imputations are performed.
+<br><br>
+There are `r obs_na$Obs_Count[which(obs_na$Number_of_NA == 4)]` observations with four `NA`s present and `r obs_na$Obs_Count[which(obs_na$Number_of_NA == 5)]` observations with five missing values. It appears that the missing values are clustered with a majority of the values missing in features that have a commonality of monetary worth : private accommodations, allowance, and scholarship. Monetary input is not quantified exactly but I do think the inferences can be made. With `NA` clustering followed by the 2023 GPA average that corresponds to the missing grade level from the previous year that will be imputed after standardizing all features. After which the correlation of features can be assessed to exclude any compounding effect such as the `matric_GPA` that will be used to impute the `r target` where the missing value appears to correspond with incoming freshman omitting the GPA by instruction. 
+
+```{r variable_cleanup2, echo=FALSE, warning=FALSE, message=FALSE}
+# clean up environment
+rm(idx_16, NA_by_Row, double)
+```
+
+## 3. Standardize Features Starting with the Group Level Assignments
+
+```{r reset_df.fac, eccho = FALSE, message = FALSE, warning=FALSE}
+# overwrite df.fac to impute factored values to
+df.fac <- df
+```
+
+### 1 GPA Target Group : 
+
+As previously mentioned there is highly interrelated missingness for the top 5 features with NAs list, where both GPA feature unfortunately have a large volume of NAs. These 2 GPA values are the only features that were extracted to a data.frame with `numeric` assignment.For now these features do not need further standardization at this time, as the features are numeric, all missing values are `NA`, and the feature values are within the Response Range [0,100]. Additionally the target feature `Target_gpa.23` do not have to be altered for model training and use but I will touch more on that then.
+
+### 2 Binary Features : "Yes" "No" --> `1` `0`
+
+here are `r length(binary_feat)` features attributed as "binary" but the formatting is slightly varies for intuitive response. For simplicity, I renamed the feature columns to have the binary categories indicate an intuitive "Yes"/"No" response to an assessment. "Yes" will be assigned `numeric` values `1` and `0` where the positive classifier value for the factored data.frame will correspond with 1.
+
+```{r numeric_encode_binary_feats}
+# positive indicator 1, negative 0, vectors ordered by binary_feat
+positive_lvl <- c("Female", "Private accommodation/ stay with family/friends", 
+                  "Yes (NSFAS, etc...)", "Yes", "Yes")
+negative_lvl <- c("Male", "Non-private accommodation ie. Res", 
+                  "No", "No", "No")
+# loop binary feat
+for (i in seq_along(binary_feat)) {
+  # vector
+  col <- df[[binary_feat[i]]]
+  # replace empty chr string
+  col[col == ""] <- NA
+  # assign lookup
+  pos <- positive_lvl[i]
+  neg <- negative_lvl[i]
+
+  # assign numeric 1,0, NA explicitly
+  df[[binary_feat[i]]] <- ifelse(col == pos, 1,
+                                      ifelse(col == neg, 0, 
+                                             NA_real_))
+}
+```
+
+```{r factor_encode_binary_features, echo = FALSE, warning=FALSE, message=FALSE}
+# factor to holding dataframe for now to avoid coercion warnings
+binary_factor <- as.data.frame(lapply(binary_feat, function(col){
+  x <- df[[col]]
+  f <- factor(x, levels = c(1,0), labels = c("Yes", "No"))
+  print(col)
+  print(levels(f))
+  return(f)
+}))
+colnames(binary_factor) <- binary_feat
+# overwrite df.fac columns
+df.fac[,which(colnames(df.fac) %in% binary_feat)] <- binary_factor
+```
+
+```{r variable_cleanup3, echo=FALSE, warning=FALSE, message=FALSE}
+#remove unneeded objects
+rm(positive_lvl, negative_lvl, pos, i, col, neg)
+```
+
+### 3. Nominal Feature : Frequency encode
+```{r faculty_frequency_encode_table, warning=FALSE, echo=TRUE, message = FALSE}
+# kaggle defined levels
+kaggle <- c('AgriSciences','Arts & Social Sciences', 'Economic & Management Sciences', 
+            'Education','Engineering','Law',' Medicine & Health Sciences', 
+            'Military Science', 'Science', 'Theology')
+
+# frequency encode nominal feature include NA
+tbl <- table(df[[nominal_feat]], useNA = "always")
+
+# match the table faculty data frame value to the tbl value
+count_idx <- match(df$faculty, names(tbl))
+
+# union to include all possible faculty level names
+all_lvls = union(kaggle, names(tbl))
+
+# match index by tbl which is of df order
+# therefore maintains 1:1 later in kept_lvl data.frame (i discovered)
+counts_idx <- match(all_lvls, names(tbl), nomatch = NA)
+counts_lvl <- as.vector(unname(tbl[counts_idx]))
+counts_lvl[which(is.na(counts_lvl))] <- 0
+
+faculty.lvls <- data.frame(Possible_Levels = all_lvls,
+                         obs_found = counts_lvl,
+                         freq = counts_lvl/nrow(df))
+                         
+# display table of faulty metrics
+faculty_table <- kable(faculty.lvls, digits = 3, align = c('l','c','r'), 
+                       caption = "Feature Levels vs Observed Levels in dataset")
+```
+
+<small> * Special Highlight* : I just discovered `match()` and I'm upset I've wasted so much time without it. I utilized the function `match()` from base R, because despite having taken DA5020 last semester the teams chat indicated using only packages covered during this course content's utilization where `install.packages()` was disallowed when completing assignments, therefore I avoided `dyplyr` explicitly and any other packages that were not explicitly covered even if they had better utility to avoid "no knit" fails. Which meant the aggregating and processing functions to merge or extract etc I knew from there were not at my disposal. I have stumbled upon multiple function in this course, many I'm sure I'll need to look up literature on again. But this was disovered on my `second` run through, so not all code is  going to be altered to update to a more streamline method , as knitting is my goal and it can unravel if I'm not careful. Which is part of my `rm()` efforts this Project as I have been delayed by a single floating `x` object before. But `merge()` was a welcomed discover as I was repeatedly pondering the best was to logically merge two data frames by the same feature value. The joy and sorrow felt in the same moment, but I am sure I shall remember this wonderful little function in the future.<\small>
+
+`r faculty_table`
+
+There is only one feature I grouped into 'nominal', and that is the feature `faculty`. This feature indicates the department a student's major corresponds too, it is completely unranked as the category has no inherent magnitude nor inherent selection criteria for or against alcohol. It can be left as is for the `Random Forest` factored data frame value without a new label. But for visualization in plots, use in `SVR` and `glmet` models, and correlation calculations, a frequency encoding would be ideal to avoid strong ranking and allow for numeric handling. <br><br>
+
+The range of frequency encoding becomes [0,1] which will match all min-max normalization to be the same scale if the empty feature levels are dropped before model use. As shown in the table there are *3 levels* with no observations and *7 observations* without an indicated level i.e. `NA`. Imputation by kNN might be a good path forward, but utilizing the `NA` values with the corresponding frequency value to represent all other `faculty` level that should be dropped is also a gd method. It allows for the maintained [0,1] frequency encoding for both the numeric data frame without recalculation and allows for dropping the levels in the factored data frame without some type of shift or buffer applied for 0s. Therefore I will impute "Other" for the `NA` features and drop all `0` count levels indicated on kaggle's overview for the factored data.frame.
+
+```{r reassign_NA_to_Other, echo=FALSE, warning=FALSE, message=FALSE}
+# index `NA`  to reassign as "Other" in df
+missing_faculty_idx <- which(is.na(df$faculty))
+df$faculty[missing_faculty_idx] <- "Other"
+
+# faculty lookup level reassign
+faculty.lvls$Possible_Levels[which(is.na(faculty.lvls$Possible_Levels))] <- "Other"
+```
+
+```{r faculty_level_table_disp, warning=FALSE, echo=FALSE, message = FALSE}
+# only keep levels with count, where all dropped levels will be encompassed by the NA frequency in a way
+keep <- which(faculty.lvls$obs_found != 0)
+lvl <- faculty.lvls$Possible_Levels[keep]
+lbl <- round(faculty.lvls$freq[keep],3)
+
+#display levels
+kept_lvl <- data.frame(Keep_Level = lvl, Freq = lbl)
+kept_table <- kable(kept_lvl, caption = "Levels to Factor Faculty Feature")
+```
+
+`r kept_table`
+
+However, even with the "Other" to drop unused labels, there is another issue concerning equivalent frequencies for 2 levels for the kept `faculty`. Frequencies will be rounded to the 3rd decimal for simplicity as they all still sum to 1. However, with equivalent frequencies ("Law" and "Medicine and Health Services"), there will be no distinction at the factored level leading to a further dropped level, to avoid this I will manually increase by 0.01 for 1 level and decrease by 0.01 for the other level, I arbitrarily chose the first level "Law" to increase and second "Medicine and Health Services" to decrease, this is to maintain their distinct levels.
+
+```{r alter_frequency_lvl, echo=FALSE, warning=FALSE, message=FALSE}
+kept_lvl$Freq[which(lvl == "Law")] <- 0.026
+kept_lvl$Freq[which(lvl == "Medicine and Health Services")] <- 0.024
+```
+
+```{r numeric_faculty_overwrite, echo =TRUE, warning=FALSE, message=FALSE}
+# use previous index for numeric impute frequencies
+freq_vec <- sapply(count_idx, function(x){
+  as.numeric(kept_lvl$Freq[x])
+})
+# impute numeric to df
+df$faculty <- freq_vec
+```
+
+```{r factor_nominal_feat_overwrite, echo=TRUE, message=FALSE, warning=FALSE}
+# switch lvl and lbl from earlier
+# factor features with labels corresponding to original level value string
+lvl <- kept_lvl[["Freq"]]
+lbl <- kept_lvl[["Keep_Level"]]
+nominal_factor <- factor(df$faculty, levels = lvl, labels = lbl)
+# overwrite df.fac corresponding columns
+df.fac[,which(colnames(df.fac) == 'faculty')] <- nominal_factor
+```
+
+```{r}
+#clean up
+rm(lvl, lbl, count_idx, counts_idx, tbl, keep, all_lvls, counts_lvl, missing_faculty_idx)
+```
+
+It could be argued that maybe there is some type of dependent relationship often identified through chi-sq test for likelihood, to determine that people with a particular major of study have a predisposition for, increased exposure to, or some other coefficient increase related to the `faculty` department they are under/associated with as the student. But for the purposes of this model, the category `faculty` will be viewed and treated as equal value. However with that assumed, to avoid the need to one-hot encode 10 levels and thereby increase dimensionality of the data by an additional 8 columns, utilizing frequency encoding where a slight degree of originality is introduced by a higher frequency rating is much more desirable for the model creation. 
+
+### 4. Ordinal/Discrete Features : Remove Speacial Characters and Ranges
+
+The Ordinal group has the highest number of features, but all except for `grade_lvl_2023` and `p_Relationship` have numeric values as characters with one level exception for `party_freq`. But all are the class type `character` as indicated by the `str()` overview, so replacing all empty character strings with `NA` previously makes this process more uniform to process. Theses numeric features do have inherent associated magnitudes. For the data.frame of factored values I will maintain the bins utilizing `cut()` for ranges but for the continuous numeric regression values, a single representative value is needed. I will instead preserve the midpoint for this and hopefully the spacing value is maintained with such.
+
+#### 1.0 Split Ordinal Features for data processing
+```{r split_ordinal_ft, echo=FALSE, warning=FALSE, message=FALSE}
+# need string strp pattern types range
+string_strp_feat <- c("mon_allowance","wk_study_hrs", "avg_num_Drink")
+
+# need string strp pattern but no range
+string_strp_noRange <- c("n_class_skip_wk", "num_Fail.mod")
+
+# need values assigned
+assign_rank_feat <- c("grade_lvl_2023", "party_freq", "p_Relationship")
+```
+
+#### 1a. Numeric Assignment for Features with Specific String Patterns & Numeric Values already
+```{r string_strip_ordinal_range_feats, echo = TRUE, warning=FALSE, message=FALSE}
+# return midpoint numeric value for SVR, Lasso, and plots
+df[,string_strp_feat] <- as.data.frame(lapply(string_strp_feat, function(c){
+  n <- df[[c]]
+  # strip special characters and spit values on dash
+  base <- strsplit(gsub("R\\s*|\\+", "", n), "\\s*-\\s*")
+  
+  # grab min value of feature split
+  midpoint <- sapply(base, function(y){
+    # numeric range (R)
+    binR <- as.numeric(unlist(y))
+    # calculate midpoint average (A) for SVR use
+    binA <- mean(binR, na.rm = T)
+    binA
+  })
+  
+  # prevents NA coercion later
+  midpoint[which(is.na(midpoint))] <- 0
+  # because midpoint is use for all other bins assign midpoint for 8+
+  midpoint[which(midpoint == 8000)] <- 8500.5
+  midpoint[which(midpoint == 8.0)] <- 9
+  return(midpoint)
+}))
+```
+
+```{r min_max_standardization, echo = FALSE, warning=FALSE, message=FALSE}
+# min-max normalized effectively divide value x by max of range
+df$mon_allowance <- df$mon_allowance/10000
+df$wk_study_hrs <- df$wk_study_hrs/10
+df$avg_num_Drink <- df$avg_num_Drink/10
+```
+
+The features levels have numeric meaning and value but also contain extra string characters that mush be stripped away to extract the numeric value related to the level rank. Using the midpoint for the bin representation allows for the value to be equadistant from it's repective bounds (upper/lower) and that buffer margin is more similar to SVM's working parameters. Because of this I felt the middle bin value was more representative than an upper or lower bound, and similarly would display better in any visualizations for data representation. NAs are also left as `0` easily distinguishing them as missing later on.
+
+I chose to print this code because while it is a large chunk of code, it does well to process multiple features that do not have the same pattern, merely similar patterns. 
+
+1. First the big step is stripping away any character string value that cannot be coerced to numeric. Part of the reason the features :`r paste0(assign_rank_feat, collapse = ", ")`; were removed is due to non-patterned level values.
+  - `strsplit(gsub("R\\s*|\\+", "", n), "\\s*-\\s*")` is nesting a `gsub()` within the `strsplit()`. Effectively `gsub()` is removing all characters except for the dash "-" and replacing those characters with and empty string. The dash is specifically left to create a finite splite feature that not only diliminates a ranged value but it accounts for the odd spacing generated through `gsub()`
+2. After the feature vector is reduced to numeric coercible values and set in a `list`, the list is passed to a nested "apply" related function `sapply()` within the `lapply()` .
+  - The list is unlisted to be either `1` or `2` length object vector depending on if that value corresponds to a range or not. Either weay the average value for the range aka the midpoint can be calculated using `mean(na.rm =T)` this also will cause a single objecrt vector to return itself which is desired for non range values.
+3. Finally the third section of the nested code is to deal with the formatting for the know range bounds. Because the ranges are defined it makes it possible to implement specific criterion to screen and adapt values if needed. Utilizing `which()` instead of `if` or `ifelse` allows for silence execution of the single clause without needing to define an alternate action if that clause does not exist for the feature.
+
+Overall I'm very stoked with how this segment of code came out, I did try to work on it to make and `ifelse` for `numeric` versus `factor` use but this would either resul in extra nesting to unlist, of generation of a factor, which while not bad was more work then replicating the code worked out and adjusting for factor *binning* cutoff values as shown in the next chunk of code. The mechanics are a large mirror to the previous code chunk but ther later requires further segmentation.
+
+#### 1b. Factor Assignment for Features with Specific String Patterns & Numeric Values already
+```{r factor_range_binning_df.fac, warning=FALSE, echo=FALSE, message = FALSE}
+# overwrite column with ordered binned factor for RF
+ordinal_range_factor <- as.data.frame(lapply(string_strp_feat, function(c) {
+  ft <- df.fac[[c]]
+  # remove special characters preventing numeric format and split on dash
+  base <- strsplit(gsub("R\\s*|\\+", "", ft), "\\s*-\\s*")
+  
+  # make values numeric and extract lower bound
+  bin_LB <- sapply(base, function(y){
+    LB <- as.numeric(unlist(y)[1])
+    # set LB for max value in each col
+    LB <- ifelse((LB == 8000) == T, 8001,
+                 ifelse((LB == 8) == T, 8,
+                        LB))
+    return(LB)
+    })
+  
+  # replace NA with 0
+  bin_LB[which(is.na(bin_LB))] <- 0
+  if (c == "mon_allowance") {
+    #bin categories where max is 10k
+    col <- cut(bin_LB,
+               # because decision tree handles categories leave categories
+               breaks = seq(0, 10000, by = 1000),
+               right = FALSE,
+               include.lowest = TRUE)
+    lvl <- levels(col)
+    col <- factor(col, levels = lvl, ordered = TRUE)
+    
+    } else {
+      # wk_study_hrs
+      # bin categories where max is 10
+      col <- cut(bin_LB,
+                 breaks = seq(0, 10, by = 1),
+                 right = FALSE,
+                 include.lowest = TRUE)
+      lvl <- levels(col)
+      col <- factor(col, levels = lvl, ordered = TRUE)
+    }
+  return(col)
+}))
+
+# overwrite df.fac corresponding columns
+df.fac[,which(colnames(df.fac) %in% string_strp_feat)] <- ordinal_range_factor
+```
+
+So instead of the coercible numeric base list  being used to calculate a midpoint value, with *lower bound* is specifically extracted for use as **breakpoints**.
+
+1. With Factoring values the model it is used on heavy impacts what happens. `Random Forest` for Regression or Classification can accept factor or numeric feature inputs without normalization of scaling and utilize the factors as they are without the need for originality really. This is because Decision Tree, Decision Rules, Random Forest , etc for related models operate off of defined "rules" that create axis-parallel splits of the data. So a factor either *does* or *does not* satisfy the split criterion. This makes `Random Forest` particularly good at guarding against outliers/extreme values and splitting/predicting a target feature.
+2. the lower bounds is guarded against `NA`s with use of `0` to avoid any unintended coercion of other feature data.
+
+`n_class_skip_wk` 5 days in a business/school week so maintain slot for '5', re-ranking to [0,10] & effectively divide by 10
+<br><br>
+I am unfamiliar on the 'semester' or 'quarter' school calendar term is like in South Africa, but assuming a "10 week" semester with 1 module a week allows for `num_Fail.mod` to have consistent scaling to dataset feature. <br><br>
+
+Due to various uses of factored data, I will use the no numerically standardized features to create a data.frame copy and then factor all features according to discreet bins or ordinal rank. Intention is to utilize `df.fac` for plots and `summary()`.
+
+#### 2. Non-Range Features with Special Charaters
+`n_class_skip_wk` is the number of missed calsses in a week, thereby an assumed 5 day business/school week allows for the re-ranking to fit [0,10] & effectively divide by 10 for min-max normalization to [0,1].
+<br><br>
+I am unfamiliar on the 'semester' or 'quarter' school calendar term is like in South Africa, but assuming a "10 week" semester with 1 module a week allows for `Failed_Module_Count` to have consistent scaling to dataset feature with the same min-max normalization to be [0,1] based on a [0,10]. <br><br>
+
+```{r string_strip_ordinal_NOrange_feats, echo = TRUE, warning=FALSE, message=FALSE}
+# return midpoint numeric value for SVR, Lasso, and plots
+df[,string_strp_noRange] <- as.data.frame(lapply(string_strp_noRange, function(c){
+  n <- df[[c]]
+  # strip special characters and spit values on dash
+  base <- as.numeric(trimws(gsub("\\+", "", n)))
+  # standardize, min-max with range [0,10] essential divide by 10
+  # shift base [0,4] to [1,5], times 2 and divide by 10 to scale [0,1]
+  n <- ((base + 1)*2)/10
+  return(n)
+}))
+```
+
+```{r manually_factor_NOrange_ordinal, echo = FALSE, warning=FALSE, message=FALSE}
+# relevel to be ordinal, have identical leveling
+lvl <- c(0.2, 0.4, 0.6, 0.8, 1.0)
+lbl <- c("0", "1", "2", "3", "4+")
+factored_n_class_skip_wk <- factor(df$n_class_skip_wk, levels = lvl, labels = lbl, ordered = TRUE)
+factored_num_Fail.mod <- factor(df$num_Fail.mod, levels = lvl, labels = lbl, ordered = TRUE)
+# overwrite df.fac corresponding columns
+df.fac[,which(colnames(df.fac) == "n_class_skip_wk")] <- factored_n_class_skip_wk
+df.fac[,which(colnames(df.fac) == "num_Fail.mod")] <- factored_num_Fail.mod
+```
+
+#### 3. `grade_lvl_2023` reassign Ranked Values and Factor
+```{r label_incoming_freshmen, warning=FALSE, echo=FALSE, message = FALSE}
+# missing target numeric, grade level character
+incoming_freshmen <- which(is.na(df$Target_gpa.23) & is.na(df$grade_lvl_2023))
+# for now assign "incoming" as the feature level
+df$grade_lvl_2023[incoming_freshmen] <- "incoming"
+```
+
+```{r reformat_grade_lvl_values, warning=FALSE, echo=TRUE, message = FALSE}
+# reassign all categories to their 'ranked' numeric value from pre-college to post-grad
+# 0-5 on [0,1] scale is (num * 2)/10 or just divide by 5
+df$grade_lvl_2023[which(df$grade_lvl_2023 == 'incoming')] <- 0.0
+df$grade_lvl_2023[which(df$grade_lvl_2023 == '1st Year')] <- 0.2
+df$grade_lvl_2023[which(df$grade_lvl_2023 == '2nd Year')] <- 0.4
+df$grade_lvl_2023[which(df$grade_lvl_2023 == '3rd Year')] <- 0.6
+df$grade_lvl_2023[which(df$grade_lvl_2023 == '4th Year')] <- 0.8
+df$grade_lvl_2023[which(df$grade_lvl_2023 == 'Postgraduate')] <- 1.0
+# numeric, later scale with magnitude [0,10]
+df$grade_lvl_2023 <- as.numeric(df$grade_lvl_2023)
+
+# relevel df.fac to be ordinal
+lvl <- c(0, 0.2, 0.4, 0.6,0.8, 1)
+lbl <- c("incoming", "1st Year", "2nd Year", "3rd Year", "4th Year", "Postgraduate")
+factored_grade_lvl <- factor(df$grade_lvl_2023, levels = lvl, labels = lbl, ordered = TRUE)
+# overwrite df.fac corresponding columns
+df.fac[,which(colnames(df.fac) == "grade_lvl_2023")] <- factored_grade_lvl
+```
+
+#### 4. `p_Relationship` reassign Ranked Values and Factor
+
+This is a subjective category for how good a student's relationship is with their parents. Because there is the concept of relational impact (whether positive or negative) a ranked order would be more ideal to give a type of weight to the relational impact.  I will use the logic that having a distant relationship does not improve or benefit the end academic average so it will be "0" integer, while the "Very Close" category will be on the opposite end of the benefit seated at "9" integer. There are only 4 categories so I think a separation of "3" for value is more likely to delineate if there actually is a rank impact for end grade for a 0-9 scale rather than 0-3. 
+
+```{r parent_relation_encode, warning=FALSE, echo=FALSE, message = FALSE}
+# numeric encoding , with scaling to [0,1] principle
+df$p_Relationship[which(df$p_Relationship == "Distant")] <- 0
+df$p_Relationship[which(df$p_Relationship == "Fair")] <- 0.3
+df$p_Relationship[which(df$p_Relationship == "Close")] <- 0.6
+df$p_Relationship[which(df$p_Relationship == "Very close")] <- 0.9
+df$p_Relationship <- as.numeric(df$p_Relationship)
+
+# relevel df.fac to be ordinal
+lvl <- c(0, 0.3, 0.6, 0.9)
+lbl <- c("Distant", "Fair", "Close", "Very close")
+factored_p_Relationship <- factor(df$p_Relationship, levels = lvl, labels = lbl, ordered = TRUE)
+# overwrite df.fac corresponding columns
+df.fac[,which(colnames(df.fac) == "p_Relationship")] <- factored_p_Relationship
+```
+
+#### 5. `party_freq` reassign Ranked Values and Factor
+The count values are not represented in a range format and so discrete use of numeric values works well for `glmnet` and `SVR`
+```{r party_freq_encode_df, warning=FALSE, echo=FALSE, message = FALSE}
+# for now 5 is temp for weekends, likely will make 2 and add to 2 count
+df$party_freq[which(df$party_freq == "0")] <- 0
+df$party_freq[which(df$party_freq == "1")] <- 1
+df$party_freq[which(df$party_freq == "2")] <- 2
+df$party_freq[which(df$party_freq == "4+")] <- 5
+df$party_freq[which(df$party_freq == "3")] <- 4
+df$party_freq[which(df$party_freq == "Only weekends")] <- 3 # reclass weekend to 3 between 2 and 3 for magnitude
+
+# min-max standardize, essentially divide by 5
+df$party_freq <- as.numeric(df$party_freq)/5
+
+# relevel df.fac to be ordinal
+lvl <- seq(0, 1, by = 0.2)
+lbl <- c("0", "1", "2", "Only weekends", "3", "4+")
+factored_party_freq <- factor(df$party_freq, levels = lvl, labels = lbl, ordered = TRUE)
+# overwrite df.fac corresponding columns
+df.fac[,which(colnames(df.fac) == "party_freq")] <- factored_party_freq
+```
+
+## 3.1 Review Standardized Data Value : Numeric and Factored datasets
+
+While I did touch on encoding intentions and altered some imputation values accordingly , now that all Missing Values are imputed or deleted it is time to normalize or factor the features depending on the respective data.frame. I will be utilizing both a non-factor numeric data.frame and a fully factored data.frame throughout the signature project because each have their respective advantages for interpreting, utilization of the data, and meet model criteria.<br><br>
+
+For the 3 regression models, the data can relatively be the same in terms of selecting min-max to standardize all the data where `center` and `scare` can be applied in `preProcess` for specific data modeling needs. But main goal is to make all features numeric for Lasso and SVR models  and keep factors for the Random Forest Regression. <br><br>
+
+Some features have discrete numeric counts with a "Week" or "Month" time frame qualifying the value as ordinal. Other features hold subjective interpretation of importance for rank assignment. There are multiple binary features that can be encoded 0 | 1 for one-hot encoding use in `glmnet` and `svm.` And then there is a purely nominal feature where frequency is the best option to reduce dimensions by avoiding one-hot encoding. The minimal originality introduced by frequency is acceptable to keep the dimensions lower. But first using numeric values instead of characters needs to replace any strings for model training whether it will remain numeric of be factored.
+
+`r google_survey_Qs$Renamed_Headers`
+
+### Min-Max Normalization of Data
+$$ \text{normalized value} = \frac{x - \text{min}(x)}{\text{max}(x) -\text{min}(x)} $$
+where :
+- x = the original data point 
+- min(x) = minimum value in dataset
+- max(x) = maximum value in dataset
+- normalized value = is thereby scaled to be between 0 and 1
+
+###  Method Utilized to rescale all Features to [0,1]
+
+The target feature can remain as a continuous numeric value range [0,100], all regression models used for the prediction do not require scaling, but do require numeric values instead of factors. For large values scaling can help stabilize predictions. All features fall into natural ranges that were multiples of or factors to 10, allowing for convenient re-scaling to a [0,1] range allowing for data use in SVR and Lasso model training, performance, and evaluation as both require the data to be scaled to begin with. It also helps assure that magnitude does not overpower another feature for distane measures if some other model is used like kNN for imputation (though I didn't get around to that).
+
+#### Numeric Dataset
+```{r standard_df, echo=FALSE, warning=FALSE, message=FALSE}
+str(df)
+cat("\n\n")
+summary(df)
+```
+
+#### Factored Dataset
+
+Random Forest works best with Factored Features if it is supposed to be a categorical Value. Because Most of these features are categoriccal even if there is rank , I factored all of the features aside from GPA and made sure to assign `ordered = TRUE` for any ranked values. 
+
+```{r standard_df.fac, echo=FALSE, warning=FALSE, message=FALSE}
+str(df.fac)
+cat("\n\n")
+summary(df.fac)
+```
+
+## 4. Outliers : Visualize the Data to Assist in Reassessing Outliers
+
+There are still missing values and potential outliers that should be evaluated and handled with imputation or deletion before modeling. SVR and Lasso cannot handle missing values well and while Random Forest has more capacity to circumvent missing values, it is still better overall to handle such datapoint ahead of modeling. That way data biases can be decided upon ahead of model creation, where model assumptions an be utilized for imputation or deletion decisions.
+<br><br>
+The dataset has limited and defined ranges for all features that are deemed acceptable responses by the nature of the google form's survey. Therefore even if a value is deemed to be an outlier for the student, a majority of outliers will not be deleted or imputed. That said I will evaluate them to identify if an acceptable answer within the defined range is more viewed as an extreme values for the feature. During standardization it was already found that no miss entries/values outside of the defined accceptible responses were in the dataset. But NA values do remain.
+
+With all features encoded, factored, or scaled to be in the range [0,1] as numeric values in `df` using min max standardization, the data can be evaluated for outliers, multicollinearity, feature selection, and plotting. But utilized `na.rm` as needed for visualizations.
+
+### 1. Boxplots : outlier detection across levels
+[Helpful geeksforgeeks.org site](https://www.geeksforgeeks.org/r-language/exploratory-data-analysis-in-r-programming/), I've used the general site before but only recently saw their boxplot use that helped me understand how to use it for cross plotting.
+```{r visualization_df, warning=FALSE, message=FALSE, echo=FALSE}
+# logic from Decision Tree
+for (col in colnames(df.fac)) {
+  np <- ggplot(df.fac,
+                aes(x = df.fac[[col]], y = df.fac[["Target_gpa.23"]], fill = df.fac[[col]])) +
+    geom_boxplot() +
+    labs(title = col,
+         x = col, 
+         y = "Target_gpa.23",
+         fill = col) +
+    ggtitle(col) +
+    theme_minimal()
+
+    print(np)
+}
+```
+
+Boxplots show a visualization of each factored predictor feature against the continuous target variable, it displays if outliers are present using dots. Even though there are "outliers" clearly present the boxplots have all observation values within their defined ranges. However due to the visualized Target outlier I decided to heck the z-scores of all features to investigate values even if imputation or removed from the dataset for being an "outlier" by the standard z-score of 3.0 is unlikely. The values should be assumed as plausible given the parameters/context.
+
+```{r z.sore_eval, echo=FALSE, warning=FALSE, message=FALSE}
+df.scaled <- as.data.frame(scale(df))
+z.score_out <- lapply(colnames(df.scaled), function(x){
+  which(abs(df.scaled[[x]]) > 3.0)
+})
+features_outlier <- sapply(z.score_out, length)
+names(features_outlier) <- colnames(df)
+feat_w_out <- features_outlier[which(features_outlier != 0)]
+print(feat_w_out)
+```
+
+```{r outlier_indepth_view, echo=FALSE}
+outliers <- unlist(z.score_out)
+outlier_tbl <- kbl(df.fac[outliers, which(colnames(df.fac) %in% names(feat_w_out))], aption = "Feature Data Points with |z-score| > 3.0") %>%
+  kable_styling(full_width = FALSE)
+```
+
+### 2. Outliers by Feature : |z-Score| > 3.0
+
+`r outlier_tbl`
+
+- `Target_gpa.23` has outlier values 34,30 but these values are possible and due to the non-zero entry for GPA likely a correct input. 
+- `grade_lvl_2023` has the entire category "Postgraduate" as an outlier because those are the only 5 observations with that level, which uncommon it is listed in the survey evaluation and should remain. 
+- `p_Relationship` has the value "Distant" which again are the only two observations with "Distant" listed, while uncommon not unlikely.
+
+*note* Boxplot has more values because there are also outliers by category evaluated, but obviously the feature itself have values close to it, as no other outliers were detected at the feature evaluation.
+
+### 3. Histogram Distribution : Evaluate Normality by Feature Density
+```{r histogram_dis, warning=FALSE, echo=FALSE, message = FALSE}
+for (col in colnames(df)){
+  np <- ggplot(df, 
+                aes(x = df[[col]])) +
+      # set bin width to half the sd value of the feature so it is easier to visualize empirical rule
+      geom_histogram(aes(y = ..density..), 
+                     binwidth = sd(df[[col]], na.rm = T)/2) +
+      stat_function(fun = dnorm,
+                    args = list(mean = mean(df[[col]], na.rm = T), sd = sd(df[[col]], na.rm = T)),
+                    color = "red", 
+                    size = 1) +
+    labs(title = col,
+         x = col, 
+         y = "Density") +
+      ggtitle(col) +
+      theme(axis.text=element_text(size=15),
+            axis.title=element_text(size=15,face="bold"),
+            strip.text.x = element_text(size = 30))
+    
+    print(np)
+}
+# clean up
+rm(i, num_feat, np)
+```
+
+### 4. Shapiro Wilks Test for Data Normality
+```{r normality_test_fail, warning=FALSE, echo=FALSE, message = FALSE}
+test <- lapply(colnames(df), function(c){
+  col <- df[[c]]
+  m <- mean(col)
+  s <- sd(col)
+  test <- shapiro.test(x = col)
+  p <- test$p.value
+  w <- test$statistic
+  cat(c, " : \n")
+  cat("\tp-value = ", round(p, 8), "\n")
+  cat("\tW statistic = ", round(test$statistic, 4), "\n\n")
+  return(test)
+})
+```
+
+All p-values are significantly below any alpha standard 0.05 or 0.01 for significance, and therby rejects the null hypothesis for Shapiro Wilks test for normality despite the W statistic being very close to 1. Because the W-statistic is fairly lose to 1 with a mojority of values > 0.60, the data does somewhat represent a normal distribution. However, none of the models used assume or require normality though it should be assess because Lasso assumes linear relations which is often more associated for when plotting the feature against the target and both features have a normal distribution. No obvious transformation so proceed with data as is for now. However the lack of normality will impact the statistical significance of model confidence intervals that not required to make predictions.
+
+### 5. Bar Plot : Class Imbalances
+[The Statistics and Machine Learning with R Workshop. Chapter 5 : Exoploratory Data Analysis](https://learning.oreilly.com/library/view/the-statistics-and/9781803240305/B18680_05.xhtml#_idParaDest-97) O'Reilly freely available book, lots of ggplot help though ggplot still refuses to stay in my memory well. Also [geeksforgeeks](https://www.geeksforgeeks.org/r-language/exploratory-data-analysis-in-r-programming/) was very helpful on plots.
+
+```{r bar_plots, warning=FALSE, echo=FALSE, message = FALSE}
+# cycle features to plot all
+for(col in colnames(df.fac)){
+  np <- ggplot(df, 
+               aes(x = df[[col]], fill = df.fac[[col]])) +
+    geom_bar(position = "dodge") +
+    labs(title = col,
+         x = col, 
+         y = "Counts",
+         fill = col) +
+    theme(axis.text=element_text(size=15),
+          axis.title=element_text(size=15,face="bold"),
+          strip.text.x = element_text(size = 30))
+  print(np)
+}
+```
+
+**Class-Imbalance note** : methods like "smote" work for classification with probability not regression for continuous variables, instead using `preProcess transformation th center and scale can help, but linear regression should handle the imbalance somewhat natural, but it may underestimate the impact of a feature and have lower coefficients in SVR or Lasso, but Random Forest handles imbalanced data well without transformations.
+
+## 5. Missing Values : Re-Evaluation and Imputation
+### 1. Review Original Findings:
+<br><br>
+`r obs_na_table`
+<br><br>
+`r ov_table`
+
+### 2. `Target_gpa.23` Imputations
+#### 1. Incoming Freshman : Previously assigned for `grade_lvl_2023`
+
+Assume all observations that have `grade_lvl_2023` and `Target_gpa.23` as `NA` to be "incoming freshmen" meaning the observation's `matric_GPA` is the target value and should be directly substituted.
+
+```{r incoming_fresh_idx, warning=FALSE, echo=FALSE, message = FALSE}
+# missing target numeric, grade level character
+target_na_start <-  which(is.na(df$Target_gpa.23))
+df$Target_gpa.23[incoming_freshmen] <- df$matric_GPA[incoming_freshmen]
+df.fac$Target_gpa.23[incoming_freshmen] <- df$matric_GPA[incoming_freshmen]
+freshman_matric_impute <- kable(df[incoming_freshmen,], caption = "Target GPA imputed as Matric for all assumed 'incoming freshmen'")
+```
+
+`r freshman_matric_impute`
+
+The target feature `r target` is a continuous numeric value from 0-100 for the average percent/grade aka GPA. From the `str()` and preliminary missing values overview, there are missing values found in the target. However, there does appear to be a related missing value cause for this where if the missing target corresponds to incoming 1st years then the reassigned feature header `matric_GPA` should be imputed as that would be the 2023 GPA.
+
+Of the `r length(missing_count[[target]])` current missing *Target_gpa.23* values `r length(incoming_freshmen)` correspond to reasonably assumed incoming freshman that were told to omit response as indicated by the original .csv file header. This is because their `matric_GPA` is the GPA for 2023. Therefore imputation of `Grade_12_GPA_perc` as the target value, can be reasonably assumed as accurate for observations were both features are `NA`. Therefore, impute the target feature's meaning. Once all dataset `NA` values are imputed the `matric_GPA` with be removed to avoid inflated model performance due to the direct imputations leading to high correlation. 
+
+#### 2. Remaining `Target_gpa.23` NA
+```{r remaining_target_na, warning=FALSE, echo=FALSE, message = FALSE}
+# look at features where Grade_Lvl is still missing
+remaining_naTarget <- which(is.na(df$Target_gpa.23))
+last_target_na <- df[remaining_naTarget,]
+remainder_target_na <- kbl(last_target_na, caption = "Remaining Obeservations with `NA` in target variable") %>%
+  kable_styling(full_width = FALSE)
+```
+
+`r remainder_target_na`
+
+```{r remove_obs_both_GPA_NA, warning=FALSE, echo=FALSE, message = FALSE}
+no_GPA <- which(is.na(df$Target_gpa.23) & is.na(df$matric_GPA))
+# both observations from both data.frames
+df <- df[-no_GPA,]
+df.fac <- df.fac[-no_GPA,]
+# clean up
+rm(tbl, mode.lvl, r.na.grade_lvl, incoming_freshmen)
+```
+
+The `r length(no_GPA)` observations that have both GPA features listed as `NA` should be deleted, as there is no confident way to determine the target and this is to build a model that predicts GPA based on assumed drinking impacts, so it has no benefit to the model training. These observations need to be removed because there is no estimated GPA that can be selected with confidence. Even with kNN or other similar classifiers, the GPA range is continuous and the purposes of this model is to evaluate *IF* there is an impact of alcohol on GPA, it does not make sense to arbitrarily assign a value to an observation without any "baseline" to work from because the imputed value would be completely fabricated and will increasing the  model's bias and accuracy depending on how it was imputed.
+
+#### 3. Calculate Average Change in GPAs by Grade Level
+
+The remaining `r length(remaining_naTarget) - length(no_GPA)` observations do have the `matric_GPA` as a baseline and the grade level from the previous year (2023). Because all other features have a majority of values filled out and the dataset is small, imputing the average change in GPA by grade level base seems reasonable to proceed with model creation. 
+
+```{r calc_avg_gpa_by_year, warning=FALSE, echo=FALSE, message = FALSE}
+# average by grade level
+matric_avg <- aggregate(matric_GPA ~ grade_lvl_2023, data = df, FUN = mean, na.rm = T)
+target_avg <- aggregate(Target_gpa.23 ~ grade_lvl_2023, data = df, FUN = mean, na.rm = T)
+
+# combine for viewing and index
+difference_GPA <- matric_avg$matric_GPA - target_avg$Target_gpa.23
+combined_GPAavg <- cbind(matric_avg, target_avg$Target_gpa.23, difference_GPA)
+combine_gpa_table <- kbl(combined_GPAavg, digit = 3, caption = "Average GPA by Grade Level; Difference = Matric - Target") %>%
+  kable_styling(full_width = FALSE)
+```
+
+`r combine_gpa_table`
+
+```{r disp_df_avg_gpa, warning=FALSE, echo=FALSE, message = FALSE}
+target_na <- which(is.na(df$Target_gpa.23))
+corresponding_idx <- match(df$grade_lvl_2023[target_na], combined_GPAavg$grade_lvl_2023)
+
+for(i in seq_along(target_na)){
+  # calc difference in GPA
+  impute_val <- df$matric_GPA[target_na[i]] - combined_GPAavg$difference_GPA[corresponding_idx[i]]
+  df$Target_gpa.23[target_na[i]] <- round(impute_val,1)
+  # Target is not a factor in factored df
+  df.fac$Target_gpa.23[target_na[i]] <- round(impute_val,1)
+}
+imputed_avg_diff <- df[target_na,]
+
+remainder_imputed_target_na <- kbl(imputed_avg_diff, caption = "Remaining Obeservations with `NA` in target variable") %>%
+  kable_styling(full_width = FALSE)
+```
+
+`r remainder_imputed_target_na`
+
+All Target values have been imputed to a value, the GPA is rounded to the first decimal point as this is continuous but it helps distinguish the calculated values from the provided GPA values and in away allows more error buffer instead of rounding out up to 0.5 percentage points. In general the GPA change, from matric average to the college year average is a decrease in GPA. The respective decrease by grade level from the table will be applied for calculating the observation's target GPA value. Luckily all Grade_Lvl_Last_Year with NA have their target and matric values, the values with missing matric_GPA do not need to be imputed as the feature will be removed before proceeding past "Missing Values Imputation" section. 
+
+### 3. Impute Non-target Features : utilizing Mode
+```{r find_mode, warning=FALSE, echo=FALSE, message = FALSE}
+tbl <- vector('list')
+recount_na <- vector('list')
+count.x <- vector('numeric')
+mode.x <- vector('character')
+mode.f <- vector('character')
+na_freq <- vector('numeric')
+
+# make monthly allowane 0 to NA again
+df$mon_allowance[which(df$mon_allowance == 0)] <- NA
+
+# assess mode for each feature
+for(col in colnames(df[,-gpa_index])){
+  x <- df[col]
+  f <- df.fac[col]
+  #tables
+  tbl <- table(x, useNA = "no")
+  tbl_f <- table(f, useNA = "no")
+  
+  # max index
+  max.x <- tbl[which(tbl == max(tbl))]
+  max.f <- tbl_f[which(tbl_f == max(tbl_f))]
+  
+  # counts equivalent
+  count.x[col] <- as.vector(unname(max.x))
+  
+  # value
+  uQ <- unique(names(max.x))
+  uQF <- unique(names(max.f))
+  mode.x[col] <- uQ
+  mode.f[col] <- uQF
+  
+  # index na
+  idx <- which(is.na(x))
+  recount_na[[col]] <- idx
+  na_freq[col] <- ifelse(length(idx) > 0, length(idx), 0)
+}
+
+# data.frame of modes
+mode_df <- data.frame(feat = colnames(df[,-gpa_index]),
+                      numNA = na_freq,
+                      mode = mode.x,
+                      factor = mode.f,
+                      count = count.x)
+#clean up
+rm(mode.x, max.x, na_freq, no_GPA, count.x)
+
+# print overview
+mode_by_feature <- kbl(mode_df[order(-mode_df$numNA),], row.names = FALSE, caption = "Feature Mode") %>%
+  kable_styling(full_width = FALSE)
+```
+
+`r mode_by_feature`
+
+All values will be imputed with the mode, even the monthly allowance feature though I do believe imputing a lower median value would likely be better than assuming the majority allowance. However for most reatures the frequency of `NA` is very load so imputing the majority value is likely unproblematic.
+
+```{r impute_mde_non_target, warning=FALSE, echo=FALSE, message = FALSE}
+# loop and impute mode for both df
+for(col in colnames(df[,-gpa_index])){ 
+  index_na <- which(is.na(df[[col]]))
+  cor_idx <- match(col, mode_df$feat)
+  impute_val <- mode_df$mode[cor_idx]
+  impute_fac <- mode_df$factor[cor_idx]
+  # impute over NA
+  df[index_na, col] <- as.numeric(impute_val)
+  df.fac[index_na, col] <- as.factor(impute_fac)
+}
+```
+
+### 4. Remove `matric_GPA` feature and Test for Remaining `NA` in dataframe
+```{r remove_matric_GPA, echo=FALSE, message=FALSE, warning=FALSE}
+df <- df[,-which(colnames(df) == 'matric_GPA')]
+df.fac <- df.fac[, -which(colnames(df.fac) == 'matric_GPA')]
+
+#clean up
+rm( f, col, idx, uQ, tbl, x, impute, val, missing_Matric, missing_Grade)
+```
+
+```{r rm_variables_check_NA, warning=FALSE, echo=TRUE, message = FALSE}
+# T/F log by feature
+col_test <- lapply(df, function(x) { any(is.na(x) == T)})
+if(any(col_test) == T){
+  print("There are still NA values to be handled.")
+}
+```
+
+No, `NA`s present in either data frame and 1:1 ratio is maintained for indexing.
+
+## 6. Multicollinearity Evaluations
+
+### 1. Pairs Panels Plot of Min-Max Normalized data
+```{r eval_correlation_pairs, warning=FALSE, echo=FALSE, message = FALSE, fig.width=12, fig.height=10, out.width='100%', fig.align='center'}
+pairs.panels(df, method = "pearson")
+```
+```{r}
+df.trans <- df
+t <- c("mon_allowance", "n_class_skip_wk", "num_Fail.mod")
+r <- 'p_Relationship'
+idx <- which(colnames(df.trans) %in% t)
+t2.df <- as.data.frame(lapply(t, function (x){
+  col <- df.trans[[x]]
+  # no 0 values
+  col <- col^3
+  return(col)
+}))
+te.df <- as.data.frame(lapply(t, function (x){
+  col <- df.trans[[x]]
+  # no 0 values
+  col <- col^(1/3)
+  return(col)
+}))
+combine <- cbind(df.trans$Target_gpa.23, df.trans[,idx], t2.df, te.df)
+pairs.panels(combine)
+```
+
+Granted *scaling* the data to have an altered range will not change the distribution or correlation of the dataset to another feature. But re-scaling will assist with regression model training an creation by balancing the impact of all features on the target variable and ensuring that feature scale is not the cause of a feature over-powering or drowning out a more relevant feature based on magnitude of numbers alone. <br><br>
+
+Contrasting to scales, is z-score normalization. Min-Max Normalization leveled the feature impact with preserving intra-feature magnitude importance, but z-score normalization centers the mean to 0 and sets the standard deviation to 1, pushing the features to a more normal distribution and making any variance differences apparent instead of potentially being convoluted by a difference in feature mean. z-Score standardization will be used when evaluating Principle Component Analysis after any obvious feature correlation is removed from the dataset, to reduce PCA computational redundancies and aid in multicollinearity and linear transformation reductions. 
+
+### 2. Pearson's Correlation Matrix : Numeric Value
+```{r pearson_ccor_matrix_num, warning=FALSE, echo=FALSE, message = FALSE}
+cor_matrix <- cor(df, use = "pairwise.complete", method = "pearson")
+num_cor_matrix <- kable(cor_matrix, caption = "Pearson's Correlation Coefficient for Features") %>%
+  kable_styling(full_width = FALSE)
+```
+
+`r num_cor_matrix`
+
+Pearson's Correlation Matrix is a standard coefficient to rank a feature's relationship to another feature. Because all features are numeric with rank or direction Pearson's is a good method to evaluate even though some features are technically categorical, they were given meaningful numeric levels.  <br><br>
+
+The correlation between features is generally ranked as 'None' [0,0.2), 'Weak' p[0.2, 0.4), 'Moderate' [0.4, 0.7), 'Strong' [0.7, 1.0), and the theoretically 'Perfect' [1], which is only seen on the diagonal for a feature crossed with itself. In this correlation matrix the `Grade_Lvl_Last_Year` and `Failed_Module_Count` seem to have a 'weak' correlation, so I'll keep that in mind for the next go around for imputation of feature missing values.
+
+### 3. Pearson Correlation Matrix : Quick Reference
+```{r pearson_cor_matrix_words, warning=FALSE, echo=FALSE, message = FALSE}
+cor.m.label <- apply(abs(cor_matrix), c(1,2), function(x){
+  new_label <- cut(x, breaks = c(-Inf, 0.2, 0.4, 0.7, 0.99, 1),
+                   labels = c("-","weak", "moderate", "REMOVE", "(self)"))
+  
+  return(new_label)
+})
+
+# 'literate' quick reference for feature relations
+quick_ref_cor <- kable(cor.m.label, caption = "Remove Multicollinearity : 0.7 + Strong / Remove<br><br>weak > 0.2 <br><br>moderate > 0.4 & < 0.7", escape = FALSE) %>%
+  kable_styling(full_width = FALSE)
+```
+`r quick_ref_cor`
+
+Any highly correlated features should have at least one of the 2 or more features removed. The idea is to have as few features, and as few highly correlated features as possible to get a simple but effective model that is not over inflated by compounding relational effects on the target feature. While Pearson's evaluated the linear association between two variables (ranges from -1 to +1), PCA with evaluate the difference in variance between two features and utilize linear transformations to reduce any remaining multicollinearity in the dataset.
+<br><br>
+
+There are a few weak linear correlations when evaluated using "Pearson" between feature levels such as the subjectively implied ranked parent relationship strength with the student. None-of these features have significant correlations that warrant removal to avoid multicollinearity effects with listing as "weak" and one at "moderate". However, use of PCA will help to further reduce association through linear transformation to help assess feature selection for model training.
+
+## 7. Priciple Component Analysis (PCA) [^pca] :
+
+[^pca]: [what PCA is and how to index it](https://www.geeksforgeeks.org/r-language/principal-component-analysis-with-r-programming/)
+
+Converts remaining correlated features into orthogonal components (perpendicular). This handles residual multicollinearity and helps reduces dimensions for a more stable regression model. Perform PCA to assist in feature selection analysis and determined an optimal "k" for feature selection in the linear model transformations. PCA can help with noise reduction. Performs PCA on predictors to create uncorrelated components. Fits a regression model using these components instead of original features.
+
+- Handles remaining multicollinearity.
+- Reduces dimensions
+- Improves stability of regression coefficients.
+
+*Important Notes:*
+
+- Min–max normalization only sets the range to [0, 1]
+- `center = TRUE` is still necessary because PCA assumes data is centered (`mean = 0`) so that the first component captures variance, not the mean offset.
+- `scale. = TRUE` standardizes to unit variance (z-Score) with `sd` set to 1, allowing for variance to be analyzed. Features with higher variance (even within [0, 1]) will dominate PCA scaling if standardizing the data is skipped. This will give equal weight to all features, so should also be  used for correlation matrix evaluation.
+- Unsupervised Learning Technique : remove target from data before imputing for PCA. Keeping the target in it's "original" units makes the interpretation easier.
+- pca_result$rotation = transformation matrix of PCA linear transformation that form the Principle Component (PC)
+  - PCA $rotation matrix columns = linear transformation's weighted coefficients applied to the original feature
+  - PCA $rotation matrix rows = original feature used ; so row index = predictor feature column index - 1 (due to target removal)
+
+### 1. z-Score Standardization of the Data for PCA use
+*note* : `scale` and `center` will be called directly inside functions to standardize the data for models that require it : PCA, Lasso, SVR <br><br>
+Again, the z-Score standardizes the data to reflect a normal distribution with mean = 0 and standard deviation = 1. PCA evaluates variance differences and so normalizing the mean is very important for easy of interpretation and increased meaning due to PCA performing various 'hidden' linear transformations to remove multicollinearity, thereby making interpretation less intuitive depending.
+
+### 2. PCA modeling : train, prune, evaluate
+```{r pca_model_processed_df, echo=TRUE, warning= FALSE, message=FALSE}
+# remove target and use center/scale to standardize for PCA
+pca_result <- prcomp(df[,-1], center = TRUE, scale. = TRUE)
+
+# target feature with corresponding principle component feature scores 
+# index to identify best k [,1:k] later
+pc_scores <- data.frame(Target = df$Target_gpa.23,
+                        pca_result$x)
+```
+
+```{r pc_score_disp, echo = FALSE}
+# rename "PC#" to corresponding feature names
+colnames(pc_scores[,-1]) <- names(pca_result$center)
+pc_score_head_disp <- kable(head(pc_scores,10), caption = "Feature's Transformed (display first 10 rows of df)") %>%
+  kable_styling(full_width = FALSE)
+```
+
+`r pc_score_head_disp`
+
+Principle Component Analysis uses the predictor feature's variance structure, not their correlation with the `Target_gpa.23` when performing linear transformations. Default setting `retx = TRUE` returns the rotated variables in $x. So the above matrix shows all of the scores for each Principal Component's feature impact with the current linear transformation for model performance.<br><br>
+
+While my signature project ensemble is not slotted to use PCA in it's prediction, I will do a training on the normalized full data set and have `step()` evaluate AIC by backwards elimination to check if the Principle Component feature ideal to select a starting feature combination as my base formula for each model training even without the linear transformation applied.
+
+$$ \text{Original Data Value} = (\text{X}_{scaled} \times \text{scale}) + \text{center}$$
+
+```{r transform_applied, echo=FALSE}
+# dataframe of applied transformation
+linear_transformation_PCA <- data.frame(Scale = pca_result$scale,
+                                        Center = pca_result$center)
+transform_table <- kbl(linear_transformation_PCA, digit = 3, caption = "Weight Coefficient and Shift applied to Data Values") %>%
+  kable_styling(full_width = FALSE)
+```
+
+`r transform_table`
+
+### 3. `lm()` Stepwise Feature Seletion on regular regression
+```{r stepwise_selection_best_PCAfeatureCompotents, warning=FALSE, message=FALSE, echo=TRUE}
+# method 1 : feature selection
+feat_model <- lm(Target_gpa.23 ~ ., data = df)
+feature_select <- step(feat_model, trace =0)
+summary(feature_select)
+```
+
+### 4. Evaluation of PCA and Linearity with Ranked feature impact
+```{r pca_evaluation, echo = TRUE}
+# method 2 : caret ; with cross-validation
+pca_ctrl <- trainControl(method = "cv",
+                         # repeat 5 times 
+                         number = 5)
+
+pca_model <- train(Target_gpa.23 ~ ., 
+                   # use df b/c preProcess
+                   data = df,
+                   method = "lmStepAIC", # caret step() version
+                   trace = FALSE, # no print out
+                   preProcess = c("center", "scale", "pca"),
+                   trControl = pca_ctrl)
+
+# PCnum is one less than feat col
+features <- colnames(df[,c(2,3,4,6,9,10)])
+formula_use <- paste0("Target_gpa.23 ~ ",paste0(features, collapse = " + "))
+
+summary(pca_model)
+```
+
+The PCA final Model selected based on the AIC score evaluation is listed above.
+
+### 6. PCA 'elbow' :
+
+The PCA 'elbow' refers to the point on a scree plot (variance explained vs. number of principal components) where the curve changes from steep to flat—like an “elbow” in the graph,  the elbow is the point where the curve bends sharply and then flatten. The scree plot shows variance explained by each principal component. The first few components explain most of the variance (steep slope). After a certain point, adding more components explains very little extra variance (flat slope). The elbow point is where this transition happens—beyond it, components mostly capture noise.
+
+- The "elbow" is the point at which the curve sharply bends and switches from a steep slope to a flattened line
+- indicates optimal k for linear regression model (i.e. 4 here, could potentially argue for 6 because there is still a significant decrease from 5 to 6). This PCA number of components should balances dimensional reduction while also retaining most of the model variance.
+- Before elbow = informative components.
+- After elbow = diminishing returns.
+- Uses variance structure of predictors, not their correlation with the Target_gpa.23 when selecting components.
+
+### 7. PCA Scree Plot for Number of Features to Select without Overfitting
+```{r pca_elbow_plot, echo=FALSE, message=FALSE, warning=FALSE}
+# visualize PCA variance impact plot
+plot(pca_result, type = "l")
+```
+
+### 8. PCA Cummulative Variance Coverage (Data Explained by Model)
+```{r pca_variable_coverage_scree, echo=FALSE}
+pca_var <- pca_result$sdev^2
+prop_var <- pca_var / sum(pca_var)
+
+plot(prop_var, 
+     xlab = "Principal Component",
+     ylab = "Proportion of Variance Explained",
+     ylim = c(0, 1), type = "b", main = "Scree Plot")
+```
+
+```{r pca_variance_coverage, echo=FALSE, message=FALSE, warning=FALSE}
+# row 4 = cumulative proportion
+importance_data <- summary(pca_result)$importance
+pc_data.frame <- as.data.frame(t(importance_data))
+pc_sd_var_tbl <- kbl(pc_data.frame, digit = 3, caption = "PCA Summary Importance for Component Explanation") %>%
+  kable_styling(full_width = FALSE)
+```
+
+While the 'elbow` is visually [4 or 6] according to the plot, if you look at the "Cumulative Proportion" of variance explained by the model is less than 80% until it hits PC12. This means that the features don't have a very linear relation even after transformation with PCA. Could be worth it to explore some transformations or feature engineering.
+
+### 9. Select top 6 features based on 'elbow' estimate
+Rank the features to find original features that have the biggest impact for PC1 to PC6.
+```{r pca_feature_impact, echo=TRUE}
+loadings <- pca_result$rotation
+loadings
+```
+
+```{r original_feature_ranked_impact, echo=TRUE}
+contribution_rank <- rowSums(abs(loadings))
+feature_rank <- sort(contribution_rank, decreasing = TRUE)
+feat_rank_tbl <- kbl(feature_rank, digit = 3, caption = "Original Feature Weighted importance for Principle Component") %>%
+  kable_styling(full_width = FALSE)
+print(feature_rank)
+```
+
+`r feat_rank_tbl`
+
+While the 'elbow' is visually [4 or 6] according to the plot, if you look at the "Cumulative Proportion" of variance explained by the model in row 4, it is less than 80% until it hits PC11. This means that the features don't have a very linear relation even after transformation with PCA. Could be worth it to explore some transformations. But I will choose to utilize the top 6 most important features that impact PCA and include the `avg_num_Drink` given the model context despite it being listed as the lowest ranked contributor to GPA prediction. 
+<br><br> 
+Final formula of top features = 
+
+$$\text{Target_gpa.23}\; \sim \; \text{mon_allowance}  +  \text{num_Fail.mod}  +  \text{faculty}  +  \text{wk_study_hrs}  + \text{hasScholarship} +  \text{p_Approve_Alc} + \text{avg_num_Drink}$$
+This is very similar the stepwise elimination process that `lm` found, but I will use the lm `step()` formula for modeling. I wont use the  PCA transformed data due to not processing the factored dataframe and it's a time constrain. However the mojority of seleted features are the same and 6 features but I will add `avg_num_Drink` due to the model goal: <br><br>
+ $$\text{Target_gpa.23}\; \sim \; \text{grade_lvl_2023}  +  \text{mon_allowance}  +  \text{n_class_skip_wk}  +  \text{num_Fail.mod}  + \text{p_Approve_Alc} +  \text{p_Relationship} + \text{avg_num_Drink}$$ 
+
+# 4. Modeling Process : 
+
+## 1. Split Data : Training and Testing
+### 1. Holdout Test Set : single split with preserved proportions `caret::createDataPartition()`
+```{r split_data_test_train, warning=FALSE, echo=TRUE, message = FALSE}
+#set.seed reproduce
+set.seed(555)
+
+# 1. split data
+train_idx <- createDataPartition(df$Target_gpa.23, p = 0.8, list = FALSE)
+
+#svr and glm
+df.train <- df[train_idx, ]
+df.test  <- df[-train_idx, ]
+# rf
+rF.train <- df.fac[train_idx,]
+rF.test <- df.fac[-train_idx,]
+```
+
+Use `caret::createDataPartition` to preserve the class proportions between the testing and and training sets for each of the models to be trained. Because the data set is small, and additional holdout set for validation separate of testing is not reasonable so the testing set will be used both for homogeneous ensemble evaluation and the full heterogeneous ensemble evaluation. I have explicitly removed the extra features not identified by PCA for use, to simplify the model calls for tuning parameters.
+
+### 2. Bagging Globally : to have consistent bagged data used for all 3 homogenous ensembles
+```{r bag_data, warning=FALSE, echo=TRUE, message = FALSE}
+# 25 bagged random samples
+nbags <- 25
+
+bootstrp_bags_idx <- lapply(1:nbags, function(x){
+  sample(1:nrow(df.train), nrow(df.train), replace = TRUE)
+})
+```
+Create 25 globally accessing bags that utilize Bootstrap Sampling specifically to sample the training data with replacement and create identical length samples for model training, and subsequently the model evaluation allowing for lineup of predictions across models.
+
+`df.train` is the designated pool of observations for model training, but will sample with replacement for the same length data.frame to training various models based on the same starting formula/framework. Utilize step() to refine model based on designated subset for training. Then combine homogoneous ensemble to average prediction for final combined output, Evaluate model performance. <br><br>
+
+The dataset is set at `r nrow(df)` observations, making 10 Folds result in approximately `r (nrow(df)/10)` observations per fold and approximately 10% of the data volume of observations (though repeats are possible with no defined proportion with `caret::createResamples`. <br><br>
+
+I will choose `Fold07` to have "40" indices as my "validation AND testing" set to  assess the ensembles' performances 'individually' as homoginous units and 'combined' as a heterogenous unit. Unfortunately the dataset is on the small side, so the testing set is the only hold out I have without reducing the dataset too much to create an unique "validation set".
+
+## 2. Tuning Parameters
+### 3. Define Grids Globally : Allow the testing of multiple Hyper-parameters dependent on Model Used
+
+[The `grid` element](https://topepo.github.io/caret/using-your-own-model-in-train.html#introduction-1)
+Use `expand.grid` to tune hyper parameters specific to the model being trained instead  of all in the `trcontrol` that way the `trControl` can be broadly applied to each model.
+```{r expand_grid_by_model, warning=FALSE, echo=TRUE, message = FALSE}
+# re-subsample of the already bootstrapped bag 20 times
+# allowing for hyperparameter tuning
+cv_ctrl <- trainControl(method = "cv", 
+                        number = 20,
+                        savePredictions = "final")
+
+# Lasso Grid
+lasso_grid <- expand.grid(
+  # lasso is purely alpha = 1
+  alpha = 1,
+  # test 20 lambda
+  lambda = seq(0.0001, 10, length = 20)
+)
+
+# SVR Grid
+sigmas <- kernlab::sigest(as.matrix(df.train[,-1]), na.action = na.omit, scaled = TRUE)
+# Tune cost (C), epsilon, and gamma for RBF kernel where sigma = 1/(2*gamma^2)
+# caret's 'svmRadial' is RBF kernel & expects sigma not gamma
+svr_grid <- expand.grid(
+  # 3 sigma values
+  sigma = sigmas,
+  # cost 0 = most strict regularizing, high # not strict
+  # test 10 costs
+  C = 2 ^(1:10)
+)
+
+# Random Forest Grid
+# number of predictor features used
+rF_grid <- expand.grid(
+  # define number of random splits of features to try
+  mtry = c(1,2,4,7)
+)
+```
+
+Lasso : the Elastic Net Family for liner regression models
+
+- alpha controls the penalty result :
+  - **Lasso = 1 where feature selection is encouraged by reducing coefficients to 0**
+  - Ridge = 0 does not fully remove features by having shrinkage approach 0 but not be zero (mostly)
+  - alpha = between 0 and 1 is a mix of the two penalties that are on a continuous scale 
+- lambda is a 'regularization' strength:
+  - Small lambda = weaker penalty for errors with coefficients closer to regular Ordinal Least Squares.
+  - Large lambda = stronger penalty for errors leading to more shrinkage bringing the resultant coefficients closer to zero.
+
+SVR: 
+
+- `kernlab::sigest` is a function that provides "Hyperparameter estimation for the Gaussian Radial Basis kernel" as titled by RHelp Documentation, it returns the lower, median, and upper estimates 
+
+Random Forest:  mtry controls how many features are considered at each split:
+
+- Smaller mtry = more randomness, potentially lower correlation among trees and increased generalization.
+- Larger mtry = trees can choose splits from more predictor features, which often lower bias but can increase variance.
+
+## 3. Train Models
+
+### 1. Numeric Dataset Required : Lasso and SVR
+```{r train_numeric_models, warning=FALSE, echo=TRUE, message = FALSE}
+# initialize model list for storage of each ensemble model on the bootstrab bags
+lasso_models <- vector('list')
+svr_models <- vector('list')
+rF_models <- vector('list')
+
+# 4. train models using same train control i.e. same bags
+for(i in 1:length(bootstrp_bags_idx)){
+  
+  sample <- bootstrp_bags_idx[[i]]
+  sample_x <- df.train[sample,]
+  
+  # Lasso
+  lasso_models[[i]] <- train(
+    Target_gpa.23 ~ grade_lvl_2023 + mon_allowance + n_class_skip_wk + num_Fail.mod + p_Approve_Alc + p_Relationship + avg_num_Drink, 
+    data = sample_x,
+    method = "glmnet",
+    tuneGrid = lasso_grid,
+    trControl = cv_ctrl,
+    metric = "RMSE",
+    preProcess = c("center", "scale"),
+    na.action = na.omit)
+  
+  # support vector machine for regression model
+  svr_models[[i]] <- train(
+    Target_gpa.23 ~ grade_lvl_2023 + mon_allowance + n_class_skip_wk + num_Fail.mod + p_Approve_Alc + p_Relationship + avg_num_Drink, 
+    data = sample_x,
+    method = "svmRadial",
+    tuneGrid = svr_grid,
+    trControl = cv_ctrl,
+    metric = "RMSE",
+    preProcess = c("center", "scale"),
+    na.action = na.omit)
+}
+```
+
+### 2. Factored Dataset Preferred : Random Forest Regression
+```{r train_factor_model, warning=FALSE, echo=TRUE, message = FALSE}
+for(i in 1:length(bootstrp_bags_idx)){
+  
+  sample <- bootstrp_bags_idx[[i]]
+  sample_x <- rF.train[sample,]
+  
+  # random forest regression model
+  rF_models[[i]] <- train(
+    Target_gpa.23 ~ grade_lvl_2023 + mon_allowance + n_class_skip_wk + num_Fail.mod + p_Approve_Alc + p_Relationship + avg_num_Drink, 
+    data = sample_x,
+    method = "rf",
+    tuneGrid = rF_grid,
+    trControl = cv_ctrl,
+    ntree = 1000,
+    importance = TRUE,
+    metric = "RMSE",
+    na.ation = na.omit)
+}
+```
+
+Lasso : glmnet : the Elastic Net Family for liner regression models
+
+- scaling and centering highly encouraged
+- `NA` values must be process either in the model or ahead of time, while I did resolve all `NA` prior I did receive errors and therefore as a guard initialized `na.action = na.omit`
+- interested in the "RMSE" metrics for model comparison across the 3 types and even within
+
+SVR: 
+
+- scaling and centering highly encouraged
+- `NA` values must be process either in the model or ahead of time, while I did resolve all `NA` prior I did receive errors and therefore as a guard initialized `na.action = na.omit`
+- interested in the "RMSE" metrics for model comparison across the 3 types and even within
+
+Random Forest:
+
+- scaling and centering is not needed for random forest
+- `NA` values don't necessarily need an action but for consistence `na.action = na.omit`
+- interested in the "RMSE" metrics for model comparison across the 3 types and even within
+- increase number of trees used from base 500 to 1000
+
+## 4. Homogenous Ensemble Function
+```{r homogeneous_ensemble_function, warning=FALSE, echo=TRUE, message = FALSE}
+homogenous_ensemble_model <- function(list_models, test_data){
+  nbags <- length(list_models)
+  # initialize matrix for model predictions/avg
+  bag_preds <- matrix(NA, nrow = nrow(df.test), ncol = nbags)
+
+  for(i in 1:nbags){
+    x_model <- list_models[[i]]
+    model_prediction <- predict(x_model, newdata = test_data)
+    bag_preds[,i] <- model_prediction
+  }
+  # average all predictions
+  ensemble_pred <- rowMeans(bag_preds)
+  return(ensemble_pred)
+}
+```
+
+### 1. Lasso Ensemble Model 
+
+With PCA confirming a feature principle component model of 4-6 but having overall low variance coverage, I think opting for Lasso that fully reduces coefficients to 0 to eliminate excess features is the correct call even if variance coverage will lower more. I did test various alpha for tuning parameters since caret allows for an integrated approach. Initially I had processed Lasso (glmnet) with `caret::bagControl()`. However I didn't figured out how to standardized the bagging for all of the models using this and instead redid all of the models to loop through predefined bagged samples for the model training. Looking for an optimal lambda for model use.
+
+### 2. Decision Regression Forest Ensemble 
+
+- Very good for non-normal data categorization, considered less effective for regression due to the continuous nature of the target but it is still a fairly useful method
+- this is already technically an ensemble by design, but I did run it through the sampled bags like SVR and Lasso for consistency
+- Ordinal features (stored as numeric in [0,1]) are fine for Random Forests. If a variable is truly categorical (like Sex, Faculty), convert to factor. (initially was going to use "Ranger" from caret for the method but it required extra package dependencies so I opted for the "rf" that I knew would knit without installing other packages not covered in the course).
+- Tuning mtry: Good starting values are sqrt(number of predictor features) or a fraction of them at 10–30%. Given the lower formula by PCA just incrementally iterated the range possible..
+- min.node.size: Larger values simplify trees and can improve generalization on small datasets.
+- num.trees: 500–2000 is typical; more trees stabilize predictions but increase training time.
+
+### 3. Support Vector Machines / Regression Ensemble
+
+SVM (Support Vector Machine) is a supervised machine learning algorithm used for classification, regression, and sometimes outlier detection. SVM finds the optimal hyperplane that separates data points of different classes in a *feature space*.
+It's goal is to maximize the margin (distance) between the hyperplane and the nearest data points from each class (called support vectors). They provide a very compact way to store classification models. Overall SVM is considered a Penalization Method, much lke Lasso and Ridge Regression Models. [^3]
+
+[^3]: [12.3.2 The SVM as a Penalization Method](file:///D:/yvonn/Documents/Northeastern%20University/DA5030/SMV_MLESLII_print12_toc.pdf)
+
+#### What is SVR Used For :
+
+- Text classification (spam detection)
+- Image recognition
+- Classification
+- **(my task)** Regression tasks (aka Support Vector Regression, SVR)
+- capable of learning complex patterns without sensitivity to noise in the data
+
+#### Types of SVR and Terminology :
+
+- Linear SVM: Works when data can be linearly separable without the need for *kernels* to increase feature dimensional space
+- Non-linear SVM: Uses *kernel* functions to map data into a *higher-dimensional* space in order for data to become more easily delineated 
+  - have "soft margins" that uise a *slack variable* (denoted $\chi_i$) ; luckily calculated for me
+- Cost Parameter (C) : aka regularization parameter : modifying this value will adjust the penalty for points that fall on the wrong side of the hyperplane. The greater the Cost parameter the harder the optimization functionality will try to achieve '100%' separation (homogeneous class divides)
+- [Kernel Trick](https://learning.oreilly.com/library/view/machine-learning-with/9781788295864/ch07s03.html) : kernel function applies a transformation to the feature vectors xi and xj, and combines them using their dot product, taking the two vectors and returns a single number.Is applied to non-linear spacesand can make a non-linear relationship appear very linear in the higher -dimension
+
+  - dot product : $\text{K}(\vec{x_{i}},\vec{x_{j}}) = \phi(\vec{x_{i}})\cdot\phi(\vec{x_{j}})$ [^1]
+  - linear kernel : $\text{K}(\vec{x_{i}},\vec{x_{j}}) = \vec{x_{i}}\cdot\vec{x_{j}}$
+  - polynomial kernel : $\text{K}(\vec{x_{i}},\vec{x_{j}}) = (\vec{x_{i}}\cdot\vec{x_{j}} + 1)^{d}$
+  - sigmoid kernel : $\text{K}(\vec{x_{i}},\vec{x_{j}}) = \text{tanh}(\kappa\vec{x_{i}}\cdot\vec{x_{j}} - \sigma)$
+  - **Gaussian RBF kernel** : <br>
+  $\text{K}(\vec{x_{i}},\vec{x_{j}}) =$ $e^{f}$ <br>
+  where : <br>
+  $ f = {-|\vec{x_{i}} -\vec{x_{j}}}^{2}|} \text{/} {2\sigma^{2}})$
+
+- Support Vectors: are determined by the data points from each class that are closest to the "MMH/decision boundary" and they define the position and orientation of the hyperplane.
+- Hyperplanes: A decision boundary that separates classes into fairly homogeneous partitions in the n-dimensional feature space. The line that leads to the greatest separation of the data classes and will generalize the best to future data is called *Maximum Margin Hyperplane (MMH)*.
+  - Hyperplane defined as equation : $\vec{w}\cdot\vec{x} + b = 0$<br>
+- Margin: The distance between the hyperplane and the support vectors; SVM aims to maximizes this margin to improve model generalization.
+- effective in high-dimensional spaces
+- helpful when the number of features is greater than the number of observations
+- less likely to over-fit the model
+
+[^1]: I googled how to make a ["vector arrow notation"](https://www.bing.com/search?q=latex%20vector%20arrow%20notation%20&qs=n&form=QBRE&sp=-1&lq=0&pq=latex%20vector%20arrow%20notation%20&sc=12-28&sk=&cvid=F4CF06B7C8BF44C69C242AAF5F75CADF) it came up in 'Copilot Search' without needing to click a link. should have known the logic behind a lot of notation is the same, so sometimes I get excited if I guess it correctly.
+
+#### SVR Limitations :
+
+- It is Computationally expensive for very large datasets, which luckily but unluckily my dataset is not very large at an effectively 401 x 16 dimension dataframe
+- Requires careful tuning of *kernel* and regularization parameters to make the model a good fit without increasing dimensionality too much.
+- this package only has `cost=` parameter for tuning (we'll see if I change my approach) but finding the best model requires testing various combinations of kernels and model parameters and can be very slow according to the textbook.
+
+# 5. Evaluation of Models : Individually and Together
+### 1. Use Homogeneous Ensemble for Predictions
+```{r train_homogeneous_models, warning=FALSE, echo=TRUE, message = FALSE}
+lasso_pred <- homogenous_ensemble_model(lasso_models, df.test)
+svr_pred <- homogenous_ensemble_model(svr_models, df.test)
+rF_pred <- homogenous_ensemble_model(rF_models, rF.test)
+```
+
+### 2. Homogeneous Model Preditions Data.Frame
+```{r ccombine_models_in_df, warning=FALSE, echo=FALSE, message = FALSE}
+# create data frame of metrics
+df.ensemble <- data.frame(Answer = df.test$Target_gpa.23,
+                          Lasso_Model = lasso_pred,
+                          SVR_Model = svr_pred,
+                          Random_Forest = rF_pred)
+head(df.ensemble, 15)
+```
+
+`r homo_pred_disp`
+
+### 3. Evaluate Homogenous Ensemble Model Performance Individually
+#### 1. Function To Calculate Model Metrics
+```{r calc_evaluation_metrics_function, warning=FALSE, echo=TRUE, message = FALSE}
+calc_errors <- function(answer_vec, pred_vec){
+  m_err <- answer_vec - pred_vec
+  m_mse <- mean(m_err^2)
+  m_rmse <- sqrt(m_mse)
+  m_mae <- mean(abs(m_err))
+  m_mape <- mean(abs(m_err / answer_vec)) * 100
+  ssres <- sum(m_err^2)
+  ssact <- sum((answer_vec - mean(answer_vec))^2)
+  m_R2 <- 1 - (ssres/ssact)
+  
+  error_vec <- c("Mean Squared Error" = m_mse,
+                 "Root Mean Squared Error" = m_rmse,
+                 "Mean Absolute Error" = m_mae,
+                 "Mean Absolute Percentage Error" = m_mape,
+                 "R-Squared Error" = m_R2)
+  
+  return(error_vec)
+}
+```
+
+```{r calculate_performance_metric_each_model, echo=TRUE}
+# performance
+lasso_result <- calc_errors(df.ensemble$Answer, df.ensemble$Lasso_Model)
+svr_result <- calc_errors(df.ensemble$Answer, df.ensemble$SVR_Model)
+rF_result <- calc_errors(df.ensemble$Answer, df.ensemble$Random_Forest)
+```
+
+#### 2. Calulate Homogeneous Ensemble's Weight for Heterogeneous Model using R-squared value
+```{r calculate_model_weight, echo=TRUE}
+# Weighted ensemble
+R_sq <- c(lasso_result["R-Squared Error"],  svr_result["R-Squared Error"],  rF_result["R-Squared Error"])
+model_wts <- R_sq/(sum(R_sq))
+names(model_wts) <- c("Lasso_wt","SVR_wt","Random_Forest_wt")
+print(model_wts)
+```
+
+#### 3. Model Performance
+```{r compile_error_and_wts, echo=FALSE}
+# error df
+df.errors <- data.frame(Lasso_Model = c(model_wts[1],lasso_result), 
+                        SVR_Model = c(model_wts[2],svr_result), 
+                        Random_Forest = c(model_wts[3],rF_result))
+row.names(df.errors)[1] <- "model weight"
+error_tbl_disp <- kbl(df.errors, digit = 3, caption = "Model Performance Metrics and Designated Wt by R-Squared Value") %>%
+  kable_styling(full_width = FALSE)
+df.errors
+```
+
+`r error_tbl_disp`
+
+### 4. Heterogeneous Ensemble 
+#### 1. Function
+```{r predict_with_wt_avg_heterogeneous_ensemble, warning=FALSE, echo=TRUE, message = FALSE}
+heterogeneous_prediction <- function(num_data, factor_data, lasso_mod, svr_mod, rf_mod, mod_wts){
+  lp <- homogenous_ensemble_model(lasso_mod, num_data)
+  sp <- homogenous_ensemble_model(svr_mod, num_data)
+  rp <- homogenous_ensemble_model(rf_mod, factor_data)
+  final_prediction <- (mod_wts[1]*lp) + (mod_wts[2]*sp) + (mod_wts[3]*rp)
+  return(final_prediction)
+}
+```
+
+#### 2. Predictions
+```{r calculate_prediction, echo = TRUE}
+#it's a long one to be a function
+final_prediction <- heterogeneous_prediction(df.test, rF.test,lasso_models, svr_models, rF_models, model_wts)
+df.ensemble$Weighted_Prediction <- final_prediction
+head(df.ensemble, 30)
+```
+
+`r final_display`
+
+#### 3. Evaluate Heterogeneous Ensemble Performance Metrics
+```{r eval_heterogeneous_performance, warning=FALSE, echo=FALSE, message = FALSE}
+# performance
+final_err <- c(1, calc_errors(df.ensemble$Answer, final_prediction))
+# add to data frame
+df.errors$Ensemble_Model <- final_err
+# final model
+df.errors
+```
+
+`r model_overview`
+
+## Model Performance Summary
+### 1. Regression Model Evaluation Metrics & Meaning:
+
+- R-Squared : 
+  - $R^{2}$ < 0 means the prediction is worse then just using the data's mean
+  - $R^{2}$ == 0 is basically equivalent to selecting the mean
+  - $R^{2}$ > 0 is a better fit than selecting the mean, and the closer to 1 the better the model represents the data's variability
+  - $R^{2}$ == 1 is a perfect fit
+- MSE Mean Square Error:
+  - the squares of error penalize errors more severely to amplify and large errors (such as extreme values/outliers) which MSE is not high here, despite not removing "outliers" because again, vbalues were well within the defined ranges.
+- RMSE Root Mean Square Error : similar to MSE, but the square root make the value interpretable in a 1:1 metric to the data making it easier to evaluate at a quick glance
+- MAE Mean Absolute Errors : 
+  - a better method at identifying presence of outliers by treating all errors equally, and the value is highes in the error chart
+- MAPE Mean Absolute Percentage Error : 
+  - provides the errors as a percentage
+
+**Typially provide predictions with :**
+
+- Confidence Interval
+- Prediction Interval
+
+However, due to the non-normal distribution the evaluation of these metrics would likely be off, and given the nexsted nature for retrieval and calculation of the interval, I will use RMSE as an estimate for the Prediction Interval though a 95% qualifying value is definitely not represented by RMSE. I decided to only calculate and evaluate the weighted prediction against the test data. Again the same test data held out from model training was used to test the homogeneous and heterogeneous ensembles.
+
+### Performance Interpretation: 
+
+`r model_overview`
+
+All 3 homogeneous Ensembles will have the same data split for the base for some level of consistency in pairing, though it does appear that the bagging will be somewhat varied by homogeneous ensemble,though all will be performed under the same `set.seed(555)`. <br><br>
+
+- df,train : `r dim(df.train)` 
+- df.test : `r dim(df.test)`
+
+The ensemble's overall performance on the dataset is very low, while the heterogeneous resulted in a reduction of errors compared to the Lasso and SVR models, it performed worse than Random Forest. Random Forest has the highest weighted model influence on the ensemble prediction due to it's overall better performance. <br>
+
+But Again the PCA indicated the features had very low variance coverage until utilization of 12 Principle Components, which is consistent with the low R-squared value of the models and ensemble. But with the PCA prediction of variance correct, it demonstrates the the rank of Principle Component formation by weight of the original feature would mean that the "Alcohol Consumption of Students" is not a good indicator for Student Performance with `party_freq`  and `avg_num_Drink` being in the lowest ranked impact. Rather the monetary standing of a student seems to have a larger impact on grad performance with `mon_allowance` and `hasScholarship` in the top ranked features. <br>
+
+`r feat_rank_tbl`
+
+Overall, the heterogeneous model's under performance makes sense with only 7 out of the 14 predictor features being used, but providing more features  would likely lead to over fitting with such a small dataset where PCA analysis indicated 4-5 PC features would be ideal before overfitting starts. The models training had `r dim(df.train)[1]` observation and testing data was only `r dim(df.test)[1]` observations, overall a very small set. The Root Mean Squared Error indicates that a prediction will likely be within 8.8% of the actual value for GPA whicch isn't terrible though it can be almost a full letter grade swing. The average mean error for the ensemble model is the lowest value which is good since because it means the ensemble has overall improved stability for it's prediction value compared to the individual models. The magnitude of error between the actual and predicted value is this indicates the model's consistency across predictions as a more clear indication of model error, versus huge errors due to outliers or extreme values though it is still sensitive to outliers. The model performance would likelye be higher if `avg_num_Drink` was removed from the model process as it was the lowest ranked PCA original feature but was included due to the question of Alcohol impact on student performance. Overall this model is a poor predictor of student performance and leads to the conclusion that alcohol habits are not the largest impact on student performance and instead another metric of focus such as financial assistance would provide a better indicator.
+
+## References:
+### Lasso/glmnet
+
+1. [3.442 Ridge and Lasso Regression Code Reference](http://artificium.us/lessons/03.ml/l-3-442-ridge-lasso-regression/l-3-442.html)
+2. [gaussian family glm](https://glmnet.stanford.edu/articles/glmnetFamily.html)
+3. [R Package 'caret'](https://cran.r-project.org/web/packages/caret/caret.pdf)
+4. [bagControl() Framework](https://cran.r-project.org/web/packages/caret/caret.pdf)
+5. [7.0.22 Linear Regression](https://topepo.github.io/caret/train-models-by-tag.html#linear-regression)
+
+### SVR
+RHelp Example in package `e1071`with `svm()`
+```
+## S3 method for class 'formula'
+svm(formula, data = NULL, ..., subset, na.action =
+na.omit, scale = TRUE)
+## Default S3 method:
+svm(x, y = NULL, scale = TRUE, type = NULL, kernel =
+"radial", degree = 3, gamma = if (is.vector(x)) 1 else 1 / ncol(x),
+coef0 = 0, cost = 1, nu = 0.5,
+class.weights = NULL, cachesize = 40, tolerance = 0.001, epsilon = 0.1,
+shrinking = TRUE, cross = 0, probability = FALSE, fitted = TRUE,
+..., subset, na.action = na.omit)
+```
+- [13.2 Illustrative Examples : SVMs](https://topepo.github.io/caret/using-your-own-model-in-train.html#illustrative-example-1-svms-with-laplacian-kernels)
+- $\text{SVM}^{struct}$ [Complex Outputs](https://www.cs.cornell.edu/people/tj/svm_light/svm_struct.html)
+- [kernlab](https://www.jstatsoft.org/article/view/v011i09)
+- [caret parameters and training SVR](https://topepo.github.io/caret/using-your-own-model-in-train.html#illustrative-example-1-svms-with-laplacian-kernels)
+
+SVR bagging, kernel selections, and for Regression
+- linear regression model [12.35](file:///D:/yvonn/Documents/Northeastern%20University/DA5030/SMV_MLESLII_print12_toc.pdf) : $f(x) = x^{T}\beta + \beta_0 $
+
+page : [457](https://hastie.su.domains/ElemStatLearn/
+[svm tutorial](https://www.svm-tutorial.com/) 
+[regression focus](https://www.svm-tutorial.com/2014/10/support-vector-regression-r/)
+[tutorial svm for regression](https://www.svm-tutorial.com/2014/10/support-vector-regression-r/)
+[fit SVM](https://topepo.github.io/caret/using-your-own-model-in-train.html#illustrative-example-1-svms-with-laplacian-kernels)
+
+* important excerpt from caret documentation * : Why did we use kernlab::sigest instead of sigest? As previously mentioned, caret will not execute library(kernlab) unless you explicitly code it in these functions. Since it is not explicitly loaded, you have to call it using the namespace operator `::` [^2]
+
+[^2]: [explicitly code kernlab in caret] (https://topepo.github.io/caret/using-your-own-model-in-train.html#introduction-1)

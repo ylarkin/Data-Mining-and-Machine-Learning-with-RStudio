@@ -1,0 +1,340 @@
+---
+title: "DA5030 Forecasting"
+author: "Larkin, Yvonne"
+date: "September 23, 2025"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+Load Dependencies
+```{r dependency_for_Q6_Q8, warning=FALSE, message=FALSE}
+library(sqldf)
+library(TTR)
+library(forecast)
+library(knitr)
+library(kableExtra)
+```
+
+## Q2. Load CSV file from URL to `df`
+```{r Q2_load_csv_url}
+url <- "http://s3.us-east-2.amazonaws.com/artificium.us/datasets/financial_portfolio_data.csv"
+
+#specifically told not to load as factor, despite "Asset" column
+df <- read.csv(url, 
+               header = T, 
+               stringsAsFactors = F)
+
+#display first 5 rows to check object loaded
+head(df, 5)
+```
+
+#### Test for Missing Values and Outliers in Data Set
+Probably took more time than I should have doing this. I wasn't sure if we could say we manually evaluated / visually inspected. But nothing to correct for in data file.
+```{r check_df_missing_values_NA}
+# each column becomes a list the rows containing NA
+missing_values <- lapply(df[,1:3], function(x) which(is.na(x)))
+
+# find length of each list; 'simplifies' to named vector 
+# name = df$col; element = # of NA
+col_NAs <- sapply(missing_values, length)
+
+# vector coerces NA to character
+missing_test <- ifelse(col_NAs == 0, NA, "Missing Value Found")
+
+# index to identify df$col (name) with missing values (!="NA")
+index_NAs <- which(missing_test != "NA")
+
+# if any missing values print warning
+if(length(index_NAs) != 0){
+  message(sum(col_NAs[index_NAs])," total Missing Values Found in df Columns: ", paste(names(col_NAs[index_NAs]), collapse = " "), " Handle Missing Values.")
+}
+```
+
+```{r check_relevant_col_outliers}
+#check for outliers in the Price Column since that's the one of interest
+mean_Price <- mean(df$Price)
+sd_Price <- sd(df$Price)
+# use z-Score of 2.5 for threshold based on 55.151 Basics descriptive Statistical Analysis
+# max x-score was 1.76 so no outliers
+outliers <- which(abs((df$Price - mean_Price) / sd_Price) > 2.5)
+
+outliers <- which(is.na(outliers))
+outlier_test <- ifelse(length(outliers) == 0, NA, " outlier(s) found in rows : ")
+
+if(!is.na(outlier_test)){
+  message(length(outliers), outlier_test, paste(outliers, collapse = " "))
+}
+```
+
+## Q3. Convert `df$Date` to *date* class
+
+### Convert "Date" character column in `df` to a *date* type using `as.Date()`. 
+
+The "Date" column has a consistent input using dashes "-" in "yyyy-mm-dd" format; so specified *format* argument inside `as.Date()` is not needed, but would allow to check data for any NA values that should be addressed otherwise. This doesn't cause NAs because of the consistent .csv file, but if there was inconsistent formats, such as use of "/" instead of "-" to separator fields. 
+
+I used R Help windows for documentation on multiple searches: as.Date, Date, strptime, format, format.Date.
+
+```{r Q3_convert_Date_type}
+# convert df$Date to "Date" type from "character" using as.Date() 
+# default format is %Y-%m-%d 
+df$Date <- as.Date(df$Date,
+                    # expected format based on csv inspection
+                    # returns NA otherwise
+                    format = "%Y-%m-%d")
+
+#index of NA values
+failed_dates <- which(is.na(df$Date))
+# If at least one NA is present print statement to inspect
+if(length(failed_dates) > 0) {
+  message("Not all 'Date' characters able to be converted using format = '%Y-%m-%d'. Inspect Data")
+}
+head(df, 5)
+```
+
+## Q4. Extract All Data labeled "Bond B" in `df$Assets` 
+### assign subset of data to `df.B`
+Specific instructions to use `which()` and `order()` for this part.
+```{r Q4_extract_Bond_B_sub_df}
+# index all entries with Asset criteria
+df.B <- df[which(df$Asset == "Bond B"),]
+
+# order by ascending "Date"; utilize argument decreasing 
+df.B <- df.B[order(df.B$Date, decreasing = F),]
+head(df.B, 5)
+```
+
+## Q5 Create a new "Month" column for `df.B`
+
+Specific instructions to use `format()`; example given used for approaching this section.
+`format()` causes the *date* type to be converted to a *character*; this does not have a negative affect on future code questions so I left it simple. Based on Canvas instructions I was not sure if it wanted anything further, but I kept `%m` for two-digit month instead of `%B` for month name. 
+```{r Q5_extract_Month_for_col}
+# previously data formatted with month = %m in Q3
+df.B$Month <- format(df.B$Date, "%m")
+head(df.B, 5)
+```
+
+## Q6. Query Average Price of "Bond B"
+### Create new `df.Monthly` using `sqldf()`.
+Canvas instructions said we could use code for this section, so I did. This calculates the average of all *Prices* by Month buckets to return a new data frame.
+
+<small> citation APA : Schedelbaur, M. (Fall 2025). *ASSIGNMENT 03.1: Predictive Modeling & Evaluation.* Northeastern Canvas. https://northeastern.instructure.com/courses/226887/assignments/2831451?module_item_id=12382182#:~:text=library(sqldf),ORDER%20BY%20Month%22) </small>
+
+```{r Q6_average_df.B_price_by_month}
+# sql query new df.Monthly
+df.Monthly <- sqldf("SELECT Month, avg(Price)
+                    AS `AvgPrice`
+                    FROM `df.B`
+                    GROUP BY Month
+                    ORDER BY Month")
+```
+
+## Q7. Investigate `df.Monthly` Trend with Plot
+Plot the "Months" across time on the x-axis and the "Average Price" (for "Bond B") on the y-axis.
+ 
+This tells us the ***average price** of "Bond B"* in a given **Month**
+<small> Even though there is only 1 year / cycle, I dynamically coded title of plot. </small>
+```{r Q7_plot_Month_v_avgPrice}
+# extract all unique years of data
+data_year <- unique(format(df$Date, "%Y"))
+
+# plot title for dynamic year/range
+data_year <- if(length(data_year) == 1){
+  year <- paste0('Monthly Average Price of "Bond B" in ', data_year[1])
+} else {
+  yr_1 <- min(data_year)
+  yr_last <- max(data_year)
+  year_range <- paste0('Monthly Average Price of "Bond B" for ', yr_1, ' - ', yr_last)
+}
+
+# plot Months(x) by Average Price (y)
+plot(df.Monthly$Month, 
+     df.Monthly$AvgPrice,
+     xlab = "Months",
+     ylab = "Average Price",
+     type = 'b',
+     pch = 16, 
+     col = "red",
+     main = data_year)
+```
+
+## Q8. Create Weighted Moving Average (WMA) Model
+### Use it to forecast the next month's *average price* of "Bond B".
+`WMA()` function, from the **`TTR`** Package, requires data to be Time-Series (TS) Data. Convert data using `as.ts()`. This Weighted Moving Average Model of the TS Data, using a 4-period weights of `c(0.1, 0.2, 0.2, 0.5)` can be made to forecast the average price of "Bond B" for the next month.
+
+```{r Q8_calc_4_period_WMA_Forecast}
+# convert data to ts; cycle (start:end) = 1:12, increment freq = 1 (month/period) 
+ts_avgPrice <- as.ts(df.Monthly$AvgPrice, 
+                     start = 1,
+                     end = 12,
+                     frequency = 1)
+
+#weights for the 4 month period
+weights <- c(0.1, 0.2, 0.2, 0.5)
+
+#allowed to use TRR::WMA; make model and write to df.Monthly
+df.Monthly$fc.next.month <- Q8_WMA <- TTR::WMA(ts_avgPrice,
+                   n = length(weights),
+                   wts = weights)
+
+#assign 'next month' forecast to print in markdown
+forecast.next_month <- tail(Q8_WMA, 1)
+```
+### **Q8_WMA** Average Monthly Price **Forecast** of "Bond B" for Next Month = **`r round(forecast.next_month, digit = 2)`**
+
+## Q9. Backtest Mean Absolute Error (MAE)
+#### \t\ aka Mead Average Deviation (MAD)
+#### Compare `Q8_WMA` model *forecast* to *actual* Time-Series Data from `df.Monthly$AvgPrice`  
+MAE is used to indicate the ***average scale of error*** (or average absolute difference in  forecast values and actual values).
+```{r Q9_backtest_MAE-MAD}
+# number of months available
+periods <- nrow(df.Monthly)
+
+# loop data, start at weighted period length (but > 1 works)
+for(m in 4:periods){
+  # error = abs(actual - forecast)
+  # actual value index is [m]; forecast is in previous row ie index [m - 1]
+  df.Monthly$abs.err[m] <- abs(ts_avgPrice[m] - Q8_WMA[m-1])
+}
+
+# calculate mean absolute error (a single numeric value); remove NAs
+Q9_mean.abs.err <- mean(df.Monthly$abs.err, na.rm = T)
+```
+### **Q9 MAE** for `Q8_WMA` model Average Price = **`r round(Q9_mean.abs.err, digit = 2)`**.
+
+## Q10. Seasonality Evaluation:
+###Create *Multiplicative Seasonality Adjusted Forecasting Model* Based on Q8_WMA forecast model
+
+#### Assume there are 3 seasons (each a 4-month period) in 1 year:
+\t\ Season 1 = 01, 02, 03, 04 <br>
+\t\ Season 2 = 05, 06, 07, 08 <br>
+\t\ Season 3 = 09, 10, 11, 12 <br>
+\t\ 1 Cycle = 3 Seasons = 1 year
+
+#### 1. Calculate Average Across 3 seasons
+
+The *Q6 `sqldf()` Query*, it made sure our time-series will always be limited to index 1:12 and ordered from Jan to Dec by month number value (even though `df.Monthly$Month` is a character type). Define the seasons numerically to index TS data for the average price of "Bond B" each month period. 
+```{r Q10_seasonal_average_df}
+# define seasons
+s1 <- c(1:4)
+s2 <- c(5:8)
+s3 <- c(9:12)
+
+# use ts_avgPrice object from Q8 to index 
+# find Avg Price of Each Season (sum all 4 periods of season)
+s1_avgP <- sum(ts_avgPrice[s1])
+s2_avgP <- sum(ts_avgPrice[s2])
+s3_avgP <- sum(ts_avgPrice[s3])
+
+# finf Avg Seasonal Price in Cycle (total cycle divide by # seasons)
+overall_seasonAvgP <- sum(ts_avgPrice)/3
+```
+#### Average Price of "Bond B":
+  Season 1 Monthly Avg Price = `r round(s1_avgP, 2)` <br>
+  Season 2 Monthly Avg Price = `r round(s2_avgP, 2)` <br>
+  Season 3 Monthly Avg Price = `r round(s3_avgP, 2)` <br>
+  Cycle's Avg Seasonal Price = `r round(overall_seasonAvgP)`
+
+#### 2. Calculate Seasonality Index Value for Each Month
+$$
+\text{Seasonality Index} = \frac{\text{Actual Season Avg Price}}{\text{Cycle's Avg Seasonal Price}}
+$$
+
+```{r Q10_monthly_seasonality_index}
+# overall average season seasonal index 
+# question seemed to imply 3 SI by season and not 12 total indices where it is within each season
+# this is what really confused me and I super over complicated it and had to rework assignment multiple times , I hope this is the correct approach 
+avg_s1.SI <- s1_avgP / overall_seasonAvgP 
+avg_s2.SI <- s2_avgP / overall_seasonAvgP
+avg_s3.SI <- s3_avgP / overall_seasonAvgP
+
+#initiate new column in df.Monthly
+df.Monthly$seasonIndex <- NA
+
+# loop 1:12 to index TS desired and assign appropriate SI in df.Monthly
+for(i in 1:length(ts_avgPrice)){
+  # conditional to use correct season for the index
+  if(i %in% s1){
+    # season 1
+    month_seasonal.SI <- avg_s1.SI
+  } else if(i %in% s2){
+    # season 2
+    month_seasonal.SI <- avg_s2.SI
+  } else if(i %in% s3){
+    # season 3
+    month_seasonal.SI <- avg_s3.SI
+  }
+  # add to df.Monthly in corresponding month's row for seasonal index value
+  df.Monthly$seasonIndex[i] <- month_seasonal.SI
+}
+```
+#### **Average Seasonality Index** of "Bond B" for:
+```latex
+      Season 1 = `r round(avg_s1.SI, 2)`
+      Season 2 = `r round(avg_s2.SI, 2)`
+      Season 3 = `r round(avg_s3.SI, 2)`
+```
+
+#### 3. Construct Seasonality Adjusted Forecast Model based on Q8_WMA 
+Designed function and tested to make sure WMAs matched before adjustment SI
+
+### Q10_model SI adjusted Q8_WMA :
+Function for SI Adjustment
+```{r Q10_define_function_adjust_forecasts_by_SI}
+# function assumes the following argument parameters:
+# seasonal_index is a 1:1 (month and length) for ts_data
+# ts_data is length 12
+seasonal.4_month_wma <- function(ts_data, seasonal_index){
+  #initiate empty vector
+  adjusted_fc <- rep(NA, length(ts_data))
+ 
+  # 4 weight moving average values
+  # most recent month [i] is 0.5 wt; least recent month [i-3] is 0.1
+  weights <- c(0.1, 0.2, 0.2, 0.5)
+  n <- length(weights)
+  
+  # loop data; start at 4 for weight length
+  for(i in n:length(ts_data)){
+    # i is current month of actual data so need [(i-3):i] for actual data to multiply by weights
+    data_window <- c((i-3):i)
+    # need next month's seasonal index which is (i+1) this gets tricky for 1:12 loop
+    fc_SI_window <- ifelse(i == 12, c((i-2):i, 1), c((i-2):(i+1)))
+    adjusted_fc[i] <- sum(weights * ts_data[data_window] * seasonal_index[fc_SI_window]) / sum(weights)
+  }
+  # return vector of adjusted forecast values saved
+  return(adjusted_fc)
+}
+```
+
+## Q11. Calculate a forecast for next month using Q10_model
+```{r Q11_forecast_using_Q10_model}
+# adjust forecast and make new column in df.Monthly
+df.Monthly$adj.fc_SI.WMA <- Q10.adjusted_model <- seasonal.4_month_wma(df.Monthly$AvgPrice, df.Monthly$seasonIndex)
+
+# isolate forcast value
+next_month_adj.fc <- tail(Q10.adjusted_model, 1)
+```
+### Next Month's Adjusted Forecast = **`r round(next_month_adj.fc, 1)`**
+
+
+## Final `df.Monthly` Table 
+Table of all calculated values by Month. Changed Column Names, made the "Month" "%B" for full name, and rounded `df.Monthy$AvgPric` for output.
+```{r Final_Table_to_view_all_col_calculated}
+# change df.Monthly column Names for Clarity
+df.Monthly$Month <- format(as.Date(paste0("2000-",df.Monthly$Month,"-01")), "%B")
+df.Monthly$AvgPrice <- round(df.Monthly$AvgPrice, 2)
+colnames(df.Monthly) <- c("Month<br>in 2023", "Avg Price", "Q8_WMA FC", "Absolute Point Error<br>for Q8_WMA FC", "Seasonal Index", "Q10<br>Adjusted FC")
+
+
+# Final Table for df.Monthly as calculated previously
+kable(df.Monthly, 
+      format = "html", 
+      digits = 2, 
+      caption = '"Bond B" Data for Average Monthly Price <br> WMA Model Forecast (FC), Error, Seasonal Index (SI), and Adjustment' , 
+      escape = F, 
+      align = 'c') %>%
+  kable_styling(full_width = T, 
+                bootstrap_options = "striped")
+```
+

@@ -1,0 +1,335 @@
+---
+title: "DA5030 kNN"
+author: "Larkin, Yvonne"
+date: "September 30, 2025"
+output:
+  html_document:
+    df_print: paged
+---
+```{r}
+library(class) 
+library(knitr)
+library(kableExtra) # tables
+library(gmodels) # CrossTable()
+```
+
+## Q2 Load .csv File to `df` from url
+```{r Q2_load_csv_url}
+# Diabetes Dataset
+url <- "http://s3.us-east-2.amazonaws.com/artificium.us/datasets/DiabetesDatasetWithMissingValues.csv"
+df <- read.csv(url,
+               header = T,
+               stringsAsFactors = F)
+#display first 5 rows;target variable is "diabetes"
+kable(head(df, 5))%>%
+  kable_styling(full_width = F)
+```
+
+### Label Diabetes Target Variable
+Followed Chapter 3 example for target variable labels:
+The "diabetes" target variable is 1 to indicate "presence" of diabetes and 0 to indicate "absence" of diabetes
+```{r Q2_encode_diabetes_factor}
+# visually double checked no missing values for factor "diabetes"
+missing_values <- for(i in 1:ncol(df)){
+  names <- colnames(df)
+  missing_values <- ifelse(which(is.na(df$names[i])) != 0, names[i], NA) 
+}
+
+# assign labels to the target variable levels as factors
+# APA: Brett, L. (3rd Edition). (2019). *Machine Learning with R. 3. Lazy Learning - Classification Using Nearest Neighbors: Example – diagnosing breast cancer with the k-NN algorithm*. Packt Publishing.https://learning.oreilly.com/library/view/machine-learning-with/9781788295864/ch03s02.html 
+df$diabetes <- factor(df$diabetes, labels = c("Absence", "Presence"))
+```
+
+### *"outliers"* and missing values
+#### no outliers removed and no other missing values found aside from "bmi"
+Basically I decided against removing any *outliers* from dataset because kNN is not sensitive to outliers (unless very extreme), 10% trim mean is being used for imputation calculations so 20,000 values are already being trimmed, and given the study with correlated factors I do not want to remove data that doesn't indicate a one off entry mistake (as many outliers are sequentially continuous and not a large jump). Code Block below is some variables saved and used for data exploration.
+```{r handling_outliers}
+# numeric features to evaluate
+column_order <- c("age", "bmi", "HbA1c_level", "blood_glucose_level")
+
+#mean
+mean_vector <- sapply(df[,column_order], mean, na.tm = T)
+mean_trim_vector <- sapply(df[,column_order], mean, trim = 0.10, na.rm = T)
+#sd
+sd_vector <- sapply(df[,column_order], sd, na.rm = T)
+#bounds
+upper_3sd <- mean_vector + (3*sd_vector)
+lower_3sd <- mean_vector - (3*sd_vector)
+
+# age range [0.08, 80.00] with 24 entry types below 2.00 where 23 do not end in 0.00; I beleive I am to assume the decimal is fraction of a year
+# leave all ages in column due to 0-80 being permissible ages to have diabetes
+age_range <- sort(unique(df$age))
+
+# bmi tricky because of gender splits
+# 59 data entry values range [10.01, 11.99] BMI - extremely underweight BMI 11.99 is -2.31 sd from mean
+# 20 data entry values range [70.96, 95.69] BMI - extremely overweight BMI 70 is 6.43 sd from mean
+# data set is skewed to overweight; whoever mean versus 10% mean trimmed only results in a decreas in BMI by 0.41 which in the scheme of this data does not seem significant; additionally kNN is not sensitive to outliers so I will not remove any outliers
+#especially given there are only 19 bmi values > 70.00 and a 10% trim mean removes 10,000 values from each end of the bmi range
+bmi_range <- sort(unique(df$bmi), decreasing = T)
+difference <- (70 - mean_vector["bmi"])
+number_sd <- difference/sd_vector["bmi"]
+difference2 <- (11.99 - mean_vector["bmi"])
+number_sd2 <- difference2/sd_vector["bmi"]
+over_wt <- which(df$bmi > 70.00)
+
+# HvA1c_level range [3.5, 9.0] ; mean = 5.53 or trim.mean = 5.57; sd = 1.07; so at most a value is 3.21 sd from trim.mean ; cor.test = 0.40 with diabetes presence - leave it
+HbA_range <- sort(unique(df$HbA1c_level))
+
+# blood glucose level range [80, 300], mean = 138.06 or trim.mean = 134.88; sd = 40.71; at most a value is 4.05 sd from trim.mean ; cor.test = 0.42 with diabetes presence - leave it
+gluc_range <- sort(unique(df$blood_glucose_level))
+```
+
+## Q3 BMI Values Missing at Random
+Impute BMI with the 10% trimmed mean for the corresponding `df$gender` column value for that case row entry missing `df$bmi`.
+```{r Q3_identify_missing_bmi_values}
+# visually check other numeric columns for NAs; only BMI has 3 missing values
+missing_vector <- lapply(column_order, function(column_name){
+  ifelse(which(is.na(df[[column_name]])), "missing values", "no missing values")
+})
+
+#visually figure out possible gender options
+gender_options <- unique(df$gender)
+
+# index the 3 categories
+female_index <- which(df$gender == "Female")
+male_index <- which(df$gender == "Male")
+other_index <- which(df$gender == "Other")
+
+# find 10% trimmed mean for all 3 levels
+# again left outliers because removing outliers only changed female and male trim.mean by 0.001 
+female_10mean <- mean(df[female_index, "bmi"], trim = 0.10, na.rm = T)
+male_10mean <- mean(df[male_index, "bmi"], trim = 0.10, na.rm = T)
+other_10mean <- mean(df[other_index, "bmi"], trim = 0.10, na.rm = T)
+
+# missing bmi values
+bmi_NA <- which(is.na(df$bmi))
+```
+Overall there are **`r length(bmi_NA)`** missing values that correspond to case rows: `r `bmi_NA` <br>
+Below are the `r length(gender_options)` gender categories and their corresponding 10% Trimmed Mean: <br>
+**`r gender_options[1]`** = `r round(female_10mean, 3)` <br>
+**`r gender_options[2]`** = `r round(male_10mean, 3)` <br>
+**`r gender_options[3]`** = `r round(other_10mean, 3)` <br>
+
+```{r Q3_impute_trim_mean_by_gender_for_bmi}
+#if else imputation statement of 10% trimmed mean for corresponding gender (took me a minute)
+df$bmi[bmi_NA] <- ifelse(df$gender[bmi_NA] == "Female", female_10mean, ifelse(df$gender[bmi_NA] == "Male", male_10mean, other_10mean))
+
+#print df cases with their imputed values
+kable(df[bmi_NA,])%>%
+  kable_styling(full_width = F)
+```
+
+## Q4 Encode the Categorical Features
+
+### One-Hot Encode Gender
+One-hot encoding results in adding columns equal to one less than the feature levels. So with gender levels = `r length(gender_options)`; it will result in `r (length(gender_options) -1)` encoded columns to replace the original `df$gender` column.
+```{r Q4_one_hot_encoding_gender}
+# one-hot-encoding 3-1 = 2 coloums (net adding one column)
+df$Female <- ifelse(df$gender == "Female", 1, 0)
+df$Male <- ifelse(df$gender == "Male", 1, 0)
+
+# "Other" corresponds to encoded columns = 0, 0
+# hold off on removing gender column since specified later
+# df <- df[,-which(names(df) == "gender")]
+```
+
+```{r Q4_extra_check_other_encoding_matches}
+# test if "Other" gender has same number of hits for the encoded method as the original column
+other_one_hot <- which(df$Female == 0 & df$Male == 0)
+other_original <- which(df$gender == "Other")
+```
+
+### Frequency Encode `df$smoking_history`
+#### make table of frequencies to index from
+Frequency encoding it the decimal percent of the category accross all data entries. So you find the count encoding and divid by the total number of cases to get that category frequency. I decided to approach this by making a *smoking_history frequency table* to index from.
+```{r Q4_frequency_encoding_smoking}
+# make data frame of smoking categories and frequency counts
+smoking_categories <- unique(df$smoking_history)
+smoking_categories <- data.frame(category = unique(df$smoking_history),
+                                 count = numeric(length = length(smoking_categories)),
+                                 frequency = numeric(length = length(smoking_categories)))
+
+#iterate over values and add count to the smoking data frame
+for(i in 1:nrow(smoking_categories)){
+  smoking_categories$count[i] <- sum(df$smoking_history == smoking_categories[i,1])
+  smoking_categories$frequency[i] <- smoking_categories$count[i] / nrow(df)
+}
+kable(smoking_categories)%>%
+  kable_styling(full_width = F)
+```
+### Save Frequency of `df$smoking_history` to new column in `df`
+```{r Q4_save_freq_encoded_values_to_new_column_df}
+#initiate new column
+df$smoke_freq <- vector(mode = "numeric", length = nrow(df))
+
+#iterate smoking_categores df
+for(i in 1:nrow(smoking_categories)){
+  index <- which(df$smoking_history == smoking_categories$category[i])
+  df$smoke_freq[index] <- smoking_categories$frequency[i]
+}
+```
+
+### Q4 Display Head of `df.encoded`
+Double check that all encoding were applied as expected and remaining data frame only has the numeric features.
+```{r Q4_sub_df_numeric_only}
+# remove original categorical columns that were encoded, and remove target variable
+df.encoded <- df[, -which(names(df) == c("gender", "smoking_history", "diabetes"))]
+kable(head(df.encoded, 5))%>%
+  kable_styling(full_width = F)
+```
+
+## Q5 Normalize Numeric Values and Assign to new dataframe `df.norm`
+Any Binary coloumns or pre-encoded columns from Q4 do not need to be z-score normalized. So Normalize other numeric features, and then append the already encoded features.
+```{r Q5_normalize_numeric_values}
+# z-score normalize all numeric features that are not already encoded or binary; use function scale() from class package
+df.norm <- as.data.frame(scale(df.encoded[,c("age", "bmi", "HbA1c_level", "blood_glucose_level")]))
+
+# check again on outliers by z score
+# show at most a 1.4% number of outliers but kNN is not sensitive so I will leave as is
+age.outlier <- which(df.norm$age > 3.0)
+bmi.outlier <- which(df.norm$bmi > 3.0)
+Hb.outlier <- which(df.norm$HbA1c_level > 3.0)
+gluc.outlier <- which(df.norm$blood_glucose_level > 3.0)
+
+# cbind the already encoded or binary columns from df.encoded to the df.norm
+df.norm <- cbind(df.norm, df.encoded[,c("hypertension", "heart_disease", "Female", "Male", "smoke_freq")])
+kable(head(df.norm, 5))%>%
+  kable_styling(full_width = F)
+```
+
+## Q6 Split Data into Training and Testing Sets
+Used set.seed for reproduceability and the markdown paragraph explanation in Q7. But with multiple seeds and no seed, the proportions seemed relatively the same between Training and Testing Sets.
+```{r Q6_Split_data_Train_and_Validate}
+#set seed for practice runs
+set.seed(555)
+# random sample to split on data
+train_index <- sample(1:nrow(df.norm), size = (nrow(df.norm)*0.80), replace = F)
+
+# 80% data to train
+df.train <- df.norm[train_index, ]
+train_labels <- df$diabetes[train_index]
+
+# 20% data to validate/test 
+df.val <- df.norm[-train_index, ]
+val_labels <- df$diabetes[-train_index]
+```
+
+## Q7 Do you observe a class imbalance of the target variable in the two new subsets? Are the target variable values present in the same proportion in each subset as they are in the original data set? If not, how would you address this? Does it matter?
+```{r Q7_Absence_table_proportions}
+#Absence Diabetes is evaluated for proportions
+#almost the Same: set.seed()in Q6 for reproducibility
+
+#training set
+t.tab <- table(train_labels)
+train_proportion <- round((t.tab[1]/sum(t.tab)), 2)
+
+#validation set
+v.tab <- table(val_labels)
+validate_proportion <- round((v.tab[1]/sum(v.tab)), 2)
+
+#overall data
+d.tab <- table(df$diabetes)
+data_overall_proportion <- round((d.tab[1]/sum(d.tab)), 2)
+
+prop.vector <- c(train_proportion, validate_proportion, data_overall_proportion)
+proportion_table <- data.frame( data.sets = c("Training Set", "Validation Set", "Total Data Set"),
+                                a.prop = prop.vector,
+                                p.prop = (1-prop.vector),
+                                count = format(c(nrow(df.train), nrow(df.val), nrow(df.norm)), scientific = F),
+                                check.names = F)
+colnames(proportion_table) <- c("Data Sets", "Absence Proportion", "Presence Proportion", "Counts")
+proportion_kable <- kable(proportion_table, align = 'c', escape = F) %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+`r proportion_kable`
+
+    From the Table above, you can see that the Proportion of "Absence" and Presence is essentially the same across the Data sets even with a 80% Training and 20% Validation split of the Overall Data. This is great because the model will be training on relatively the same class occurrence rate, meaning the table will likely not have a high "False" Negative or Positive count for predictions. This is important because of the large classification imbalance where roughly 90% of the samples will have an "absence" of diabetes. If you have a high training set where the proportion of diabetes "Presence" is very high, there is a change to over fit the model to select "Presence" when really the data has a wider variability of "Absence" diagnosis as it relates to the other features used to evaluate the k-Nearest Neighbors. If the training set has a high proportion of "Present" diabetes diagnosis, the likelihood of "False Positives" increases because there is a chance that "Present could become the majority of Nearest Neighbors, especially with a low *k* value.  
+
+    I did not alter my split because the proportions are similar; but if the proportions were different I would try and get them to be close in proportion of absence/presence between split sets to be similar to the overall data available:
+  
+1. I would approach assessing the proportion of "Presence" and "Absence" in the Overall Data Set. 
+2. I would then determine the data split of cases I desired (would likely keep it an 80/20 split)
+3. I would calculate what number of "Absence" cases are needed for each set (Trainin/Validation) and by default get the "Presence" needed.  So for example if:
+- "Target" Diagnosis = 0.35 proportion of the Overall Data (or 35%)
+- Take (overall # of cases) * (split %) = (# of cases in that split)
+- Then take (# of cases in that split) * (Decimal Percent / proportion value) = (# of "Target" Diagnosis cases needed in that set)
+- so "Absence" = 0.35 and "Presence" = 0.65 of 100,000 cases in a (80/20)% split is (80,000/20,000)cases
+- $ \text{Training Set Needs "Absence" cases to} = 80,000 \times 0.35 $ = `r (80000*0.35)`
+- $ \text{Trainign Set Needs "Prsence" cases to} = 20,000 \times 0.35 $ = `r (20000*0.65)`
+- $ \text{Validation Set Needs "Absence" cases to} = 20,000 \times 0.35 $ = `r (20000*0.35)`
+- $ \text{Validation Set Needs "Presence" cases to} = 20,000 \times 0.35 $ = `r (20000*0.65)`
+- any remaining (uneven) case splits should be added consistently to either the Training or Validation Set for case numbers
+4. Once I had the Number of Cases for each diagnosis needed I would index the data based on `df$diabetes` diagnosis label and then sample the number of "Absence" or "Presence" cases respectively. Sampling would still be done randomly within each diagnosis.
+5. I would append and sort the resultant Training and Validation sets so that the label orders are the same for the model and evaluation
+  
+
+## Q8 Create kNN predictive Model from `df.train`
+```{r Q8_train_kNN_predictive_model}
+# k = 5, predict presence of diabetes
+model <- knn(train = df.train,
+             test = df.val,
+             cl = train_labels,
+             k = 5)
+# k value provided but could loop through to test k's like chapter 3 or the caret tutorial (though I am still figuring out the parallel boot)
+```
+## Q9 Confusion Matrix with `CrossTable()`
+
+A confusion Matrix is constructed with the Columns as the Model Prediction and Rows as the Actual Data Values (like a punnet square); the intersection of values then determine if a prediction is considered a True Positive, False Positive, False Negative, or True Negative. 
+
+Shown in the table below is the normal orientation for confusion matrices but the axis can be flipped:
+
+Positive = "Presence of Diabetes" <br>
+Negative = "Absence of Diabetes"
+
+|                              | Predicted Model <br> Positive | Predicted Model <br> Negative|
+|:----------------------------:|:-----------------------------:|:----------------------------:|
+| **Actual Data <br> Positive**|True <br> Positive             |False <br> Negative           |
+| **Actual Data <br> Negative**|False <br> Positive            |True <br> Negative            |
+
+### `CrossTable(actual_data_values, model_predicted_values)`
+```{r Q9_CrossTable_display_confusion_matrix}
+# evaluate
+conf.matrix <- CrossTable(x = val_labels,
+           y = model,
+           prop.chisq = F)
+```
+
+## Q10 Paragraph Markdown of Confusion Matrix Values
+### My Confusion Matrix is Flipped from the norm so it reads like:
+```{r Q10_CrossTable_dynamic_code}
+#counts of each
+num_cases <- conf.matrix$t
+#accuracy = correct/total = [1,1] + [2,2]
+overall_accuracy <- (num_cases[1,1] + num_cases[2,2])/sum(num_cases)
+# rate of negative = true negative / (true neg + false pos) ; so row of "absence" = row 1
+true_pos_perc <- round((num_cases[1,1]/sum(num_cases[1,])*100), digit = 1)
+# rate of positive = true positive / (true pos + false neg) ; so row of "presence" = row 2
+true_neg_perc <- round((num_cases[2,2]/sum(num_cases[2,])*100), digit = 1)
+```
+|                              | Predicted Model <br> Negative              | Predicted Model <br> Positive              |
+|:----------------------------:|:------------------------------------------:|:------------------------------------------:|
+| **Actual Data <br> Negative**|True Negative <br> = **`r num_cases[1,1]`** |False Positive <br> = **`r num_cases[1,2]`**|
+| **Actual Data <br> Positive**|False Negative <br> = **`r num_cases[2,1]`**|True Positive <br> = **`r num_cases[2,2]`** |
+
+### Q10 paragraph :
+The kNN algorithm exhibits an overall accuracy of `r round((overall_accuracy*100), digit = 1)`% with a true positive rate of `r true_pos_perc`% and a true negative rate of `r true_neg_perc`%.
+
+This means the model is **over-diagnosing breast cancer**, which is arguably much better than a false positive. This way cancer is ***not*** being over-looked.
+
+### The `CrossTable()` utilizes four components:
+1. `$t` as raw counts <br>
+2. `$prop.tbl` as proportion of cases from total tested set <br>
+3. `$prop.row` row-wise proportion of cases <br>
+4. `$prop.col` column-wise proportions of cases <br>
+ <br> <br>
+From the components the accuracy can be calculated from the `$t` table 
+$$ \%\: \text{Accuracy} = \:\frac{\sum \text{"True" counts}}{\sum \text{Total counts}} \times \:100 $$
+<br><br>
+$$ \%\: \text{True Target Rate} = \:\frac{\sum \text{Model's "True" Target Count}}{\sum \text{Total "Actual" Target Count}} \times \:100 $$
+```{r}
+#dded to see if this still applies to kNN
+# added October 22, 2025 
+library(caret)
+confusionMatrix(model, val_labels)
+```
+
